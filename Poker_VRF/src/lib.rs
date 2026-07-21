@@ -13,24 +13,33 @@
 //!    legal — five of a kind is a real hand here). Best hand wins.
 //!
 //! Everything a game produces is collected in a [`Transcript`] that any third
-//! party can re-verify with [`verify_transcript`].
+//! party can re-verify with [`verify_transcript`]. Transcripts serialize to a
+//! versioned, hex-encoded JSON document ([`Transcript::to_json`]) so the
+//! verification is portable across processes, machines, and languages.
 
 use rand::rngs::OsRng;
 use rand::RngCore;
 use schnorrkel::{
     context::SigningContext,
-    vrf::{VRFPreOut, VRFProof},
+    vrf::{VRFInOut, VRFPreOut, VRFProof},
     Keypair, PublicKey,
 };
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
 
 const COMMIT_DOMAIN: &[u8] = b"poker-vrf.commit.v1";
+const PASSPHRASE_DOMAIN: &[u8] = b"poker-vrf.passphrase.v1";
 const SEED_DOMAIN: &[u8] = b"poker-vrf.seed.v1";
 const DRAW_DOMAIN: &[u8] = b"poker-vrf.draw.v1";
+/// `VRFInOut::make_bytes` context — the randomness every draw is derived from.
+const OUTPUT_DOMAIN: &[u8] = b"poker-vrf.output.v1";
 const CARDS_DOMAIN: &[u8] = b"poker-vrf.cards.v1";
 
 const HAND_SIZE: usize = 5;
+
+/// Wire-format version written into every serialized [`Transcript`].
+pub const TRANSCRIPT_VERSION: u32 = 1;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -48,6 +57,10 @@ pub enum Error {
     BadTranscriptShape,
     /// The transcript's claimed winner does not match recomputation.
     WrongWinner { claimed: usize, actual: usize },
+    /// A serialized transcript could not be parsed.
+    Encoding { what: String },
+    /// A serialized transcript declares a wire version this build cannot read.
+    UnsupportedVersion { found: u32, expected: u32 },
 }
 
 impl fmt::Display for Error {
@@ -67,6 +80,11 @@ impl fmt::Display for Error {
                     "transcript claims winner {claimed}, recomputation says {actual}"
                 )
             }
+            Error::Encoding { what } => write!(f, "could not parse transcript: {what}"),
+            Error::UnsupportedVersion { found, expected } => write!(
+                f,
+                "transcript wire version {found} is not supported (this build reads {expected})"
+            ),
         }
     }
 }
@@ -184,16 +202,21 @@ pub fn evaluate_hand(cards: &[Card; HAND_SIZE]) -> HandRank {
     HandRank { category, tiebreak }
 }
 
-/// Deterministically map a verified VRF pre-output to a 5-card hand.
+/// Deterministically map a verified VRF output to a 5-card hand.
 ///
-/// Entropy is a SHA-256 chain over the pre-output; each byte below 208 (= 4·52)
+/// The input is the output of [`VRFInOut::make_bytes`] (see [`vrf_output`]),
+/// *not* the raw pre-output: `make_bytes` is the 2Hash-DH construction, which
+/// commits to the VRF input as well as the output, whereas a bare `VRFPreOut`
+/// is only a compressed group element that does not bind the input.
+///
+/// Entropy is a SHA-256 chain over that output; each byte below 208 (= 4·52)
 /// yields one unbiased card via modulo, others are rejected (no modulo bias).
-pub fn cards_from_preout(preout: &[u8; 32]) -> [Card; HAND_SIZE] {
+pub fn cards_from_vrf_output(vrf_output: &[u8; 32]) -> [Card; HAND_SIZE] {
     let mut cards = [Card { rank: 2, suit: 0 }; HAND_SIZE];
     let mut found = 0;
     let mut block: [u8; 32] = Sha256::new()
         .chain_update(CARDS_DOMAIN)
-        .chain_update(preout)
+        .chain_update(vrf_output)
         .finalize()
         .into();
     loop {
@@ -222,6 +245,7 @@ pub fn cards_from_preout(preout: &[u8; 32]) -> [Card; HAND_SIZE] {
 pub struct Player {
     keypair: Keypair,
     secret: Option<[u8; 32]>,
+    preset: Option<[u8; 32]>,
 }
 
 impl Player {
@@ -229,6 +253,7 @@ impl Player {
         Self {
             keypair: Keypair::generate_with(OsRng),
             secret: None,
+            preset: None,
         }
     }
 
@@ -238,18 +263,39 @@ impl Player {
         Self {
             keypair: mini.expand_to_keypair(schnorrkel::ExpansionMode::Uniform),
             secret: None,
+            preset: None,
         }
+    }
+
+    /// Supply this player's own secret contribution for the next commit,
+    /// instead of letting [`Player::commit`] draw one from the system RNG.
+    ///
+    /// This is the one step a human can perform that materially affects the
+    /// protocol: it is what lets you personally know the seed was not steered,
+    /// rather than taking the process's word for it.
+    ///
+    /// The value is consumed by the next [`Player::commit`] — a later round
+    /// draws fresh randomness, because reusing a commit-reveal secret across
+    /// rounds would let anyone who saw the first reveal predict the second.
+    pub fn preset_secret(&mut self, secret: [u8; 32]) {
+        self.preset = Some(secret);
     }
 
     pub fn public(&self) -> [u8; 32] {
         self.keypair.public.to_bytes()
     }
 
-    /// Phase 1: draw a secret contribution and publish its commitment,
-    /// domain-separated and bound to this player's public key.
+    /// Phase 1: publish a commitment to a secret contribution, domain-separated
+    /// and bound to this player's public key.
+    ///
+    /// Uses the secret from [`Player::preset_secret`] if one is waiting,
+    /// otherwise draws a fresh one from the system RNG.
     pub fn commit(&mut self) -> [u8; 32] {
-        let mut secret = [0u8; 32];
-        OsRng.fill_bytes(&mut secret);
+        let secret = self.preset.take().unwrap_or_else(|| {
+            let mut fresh = [0u8; 32];
+            OsRng.fill_bytes(&mut fresh);
+            fresh
+        });
         self.secret = Some(secret);
         commitment_hash(&self.public(), &secret)
     }
@@ -259,18 +305,56 @@ impl Player {
         self.secret.expect("reveal called before commit")
     }
 
-    /// Phase 3: VRF-sign the shared seed, producing (pre-output, proof).
-    pub fn draw(&self, seed: &[u8; 32]) -> ([u8; 32], [u8; 64]) {
+    /// Phase 3: VRF-sign the shared seed.
+    ///
+    /// Returns the pre-output and proof (both go in the transcript) plus the
+    /// derived VRF output the hand is dealt from. A verifier recomputes that
+    /// same output from the pre-output and proof — see [`verify_draw`].
+    pub fn draw(&self, seed: &[u8; 32]) -> Draw {
         let ctx = SigningContext::new(DRAW_DOMAIN);
         let (inout, proof, _) = self.keypair.vrf_sign(ctx.bytes(seed));
-        (inout.to_preout().to_bytes(), proof.to_bytes())
+        Draw {
+            preout: inout.to_preout().to_bytes(),
+            proof: proof.to_bytes(),
+            output: vrf_output(&inout),
+        }
     }
+}
+
+/// One player's VRF draw: what goes on the wire, plus the randomness it yields.
+#[derive(Debug, Clone, Copy)]
+pub struct Draw {
+    pub preout: [u8; 32],
+    pub proof: [u8; 64],
+    pub output: [u8; 32],
+}
+
+/// The canonical randomness of a VRF draw: `make_bytes` under [`OUTPUT_DOMAIN`].
+fn vrf_output(inout: &VRFInOut) -> [u8; 32] {
+    inout.make_bytes(OUTPUT_DOMAIN)
 }
 
 impl Default for Player {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Derive a 32-byte secret contribution from a human-typed passphrase, so a
+/// person can supply their own entropy to [`Player::preset_secret`].
+///
+/// This is a plain domain-separated hash, *not* a password KDF — a guessable
+/// passphrase yields a guessable contribution. That is survivable here (the
+/// seed stays unpredictable as long as *any* participant contributed real
+/// randomness) but it means your own contribution is only as unpredictable as
+/// what you typed. Prefer the system RNG unless you specifically want to be
+/// able to reproduce a game.
+pub fn secret_from_passphrase(passphrase: &str) -> [u8; 32] {
+    Sha256::new()
+        .chain_update(PASSPHRASE_DOMAIN)
+        .chain_update(passphrase.as_bytes())
+        .finalize()
+        .into()
 }
 
 fn commitment_hash(pubkey: &[u8; 32], secret: &[u8; 32]) -> [u8; 32] {
@@ -296,20 +380,26 @@ pub fn combine_seed(commitments: &[[u8; 32]], reveals: &[[u8; 32]]) -> [u8; 32] 
 }
 
 /// Verify one player's VRF draw against the shared seed.
+///
+/// On success returns the draw's VRF output — the randomness the hand is dealt
+/// from. Deriving cards from this (rather than from the pre-output bytes the
+/// transcript carries) means a hand can only be computed *after* the proof has
+/// been checked.
 pub fn verify_draw(
     player: usize,
     pubkey: &[u8; 32],
     seed: &[u8; 32],
     preout: &[u8; 32],
     proof: &[u8; 64],
-) -> Result<(), Error> {
+) -> Result<[u8; 32], Error> {
     let pk = PublicKey::from_bytes(pubkey).map_err(|_| Error::Malformed { what: "pubkey" })?;
     let po = VRFPreOut::from_bytes(preout).map_err(|_| Error::Malformed { what: "preout" })?;
     let pr = VRFProof::from_bytes(proof).map_err(|_| Error::Malformed { what: "proof" })?;
     let ctx = SigningContext::new(DRAW_DOMAIN);
-    pk.vrf_verify(ctx.bytes(seed), &po, &pr)
-        .map(|_| ())
-        .map_err(|_| Error::BadVrfProof { player })
+    let (inout, _) = pk
+        .vrf_verify(ctx.bytes(seed), &po, &pr)
+        .map_err(|_| Error::BadVrfProof { player })?;
+    Ok(vrf_output(&inout))
 }
 
 // ---------------------------------------------------------------------------
@@ -317,14 +407,90 @@ pub fn verify_draw(
 // ---------------------------------------------------------------------------
 
 /// Everything needed for a third party to re-verify a finished game.
-#[derive(Debug, Clone)]
+///
+/// Serializes to versioned JSON with every byte string hex-encoded — see
+/// [`Transcript::to_json`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Transcript {
+    #[serde(with = "hex_arrays")]
     pub pubkeys: Vec<[u8; 32]>,
+    #[serde(with = "hex_arrays")]
     pub commitments: Vec<[u8; 32]>,
+    #[serde(with = "hex_arrays")]
     pub reveals: Vec<[u8; 32]>,
+    #[serde(with = "hex_arrays")]
     pub preouts: Vec<[u8; 32]>,
+    #[serde(with = "hex_arrays")]
     pub proofs: Vec<[u8; 64]>,
     pub winner: usize,
+}
+
+/// A transcript as it appears on the wire, tagged with the format version.
+#[derive(Serialize, Deserialize)]
+struct TranscriptDoc {
+    version: u32,
+    #[serde(flatten)]
+    transcript: Transcript,
+}
+
+impl Transcript {
+    /// Encode as pretty-printed JSON: a `version` tag plus hex byte strings.
+    ///
+    /// The encoding does not need to be byte-canonical — [`verify_transcript`]
+    /// re-derives everything from the decoded fields, never from the document
+    /// text, so reformatting a transcript cannot change whether it verifies.
+    pub fn to_json(&self) -> String {
+        let doc = TranscriptDoc {
+            version: TRANSCRIPT_VERSION,
+            transcript: self.clone(),
+        };
+        serde_json::to_string_pretty(&doc).expect("Transcript is always serializable")
+    }
+
+    /// Decode a transcript produced by [`Transcript::to_json`].
+    ///
+    /// Decoding only checks that the document is well-formed and that every
+    /// field has the right length — it says nothing about whether the game was
+    /// honest. Pass the result to [`verify_transcript`] for that.
+    pub fn from_json(s: &str) -> Result<Self, Error> {
+        let doc: TranscriptDoc = serde_json::from_str(s).map_err(|e| Error::Encoding {
+            what: e.to_string(),
+        })?;
+        if doc.version != TRANSCRIPT_VERSION {
+            return Err(Error::UnsupportedVersion {
+                found: doc.version,
+                expected: TRANSCRIPT_VERSION,
+            });
+        }
+        Ok(doc.transcript)
+    }
+}
+
+/// Serialize `Vec<[u8; N]>` as an array of hex strings.
+mod hex_arrays {
+    use serde::{de::Error as _, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S, const N: usize>(v: &[[u8; N]], s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        s.collect_seq(v.iter().map(hex::encode))
+    }
+
+    pub fn deserialize<'de, D, const N: usize>(d: D) -> Result<Vec<[u8; N]>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Vec::<String>::deserialize(d)?
+            .into_iter()
+            .map(|s| {
+                let bytes = hex::decode(&s).map_err(D::Error::custom)?;
+                <[u8; N]>::try_from(bytes.as_slice()).map_err(|_| {
+                    D::Error::custom(format!("expected {N} bytes, got {}", bytes.len()))
+                })
+            })
+            .collect()
+    }
 }
 
 /// The verified outcome of a game.
@@ -336,12 +502,12 @@ pub struct Outcome {
     pub winner: usize,
 }
 
-/// Decide the winner from verified pre-outputs: best hand wins; exact hand
-/// ties fall back to lexicographic pre-output comparison (deterministic).
-fn decide_winner(preouts: &[[u8; 32]], ranks: &[HandRank]) -> usize {
+/// Decide the winner from verified VRF outputs: best hand wins; exact hand ties
+/// fall back to lexicographic comparison of the outputs (deterministic).
+fn decide_winner(outputs: &[[u8; 32]], ranks: &[HandRank]) -> usize {
     let mut best = 0;
     for i in 1..ranks.len() {
-        if (&ranks[i], &preouts[i]) > (&ranks[best], &preouts[best]) {
+        if (&ranks[i], &outputs[i]) > (&ranks[best], &outputs[best]) {
             best = i;
         }
     }
@@ -354,13 +520,14 @@ pub fn play_game(players: &mut [Player]) -> (Transcript, Outcome) {
     let reveals: Vec<[u8; 32]> = players.iter().map(|p| p.reveal()).collect();
     let seed = combine_seed(&commitments, &reveals);
 
-    let draws: Vec<([u8; 32], [u8; 64])> = players.iter().map(|p| p.draw(&seed)).collect();
-    let preouts: Vec<[u8; 32]> = draws.iter().map(|d| d.0).collect();
-    let proofs: Vec<[u8; 64]> = draws.iter().map(|d| d.1).collect();
+    let draws: Vec<Draw> = players.iter().map(|p| p.draw(&seed)).collect();
+    let preouts: Vec<[u8; 32]> = draws.iter().map(|d| d.preout).collect();
+    let proofs: Vec<[u8; 64]> = draws.iter().map(|d| d.proof).collect();
+    let outputs: Vec<[u8; 32]> = draws.iter().map(|d| d.output).collect();
 
-    let hands: Vec<[Card; HAND_SIZE]> = preouts.iter().map(cards_from_preout).collect();
+    let hands: Vec<[Card; HAND_SIZE]> = outputs.iter().map(cards_from_vrf_output).collect();
     let ranks: Vec<HandRank> = hands.iter().map(evaluate_hand).collect();
-    let winner = decide_winner(&preouts, &ranks);
+    let winner = decide_winner(&outputs, &ranks);
 
     let transcript = Transcript {
         pubkeys: players.iter().map(|p| p.public()).collect(),
@@ -401,13 +568,20 @@ pub fn verify_transcript(t: &Transcript) -> Result<Outcome, Error> {
 
     let seed = combine_seed(&t.commitments, &t.reveals);
 
+    let mut outputs = Vec::with_capacity(n);
     for i in 0..n {
-        verify_draw(i, &t.pubkeys[i], &seed, &t.preouts[i], &t.proofs[i])?;
+        outputs.push(verify_draw(
+            i,
+            &t.pubkeys[i],
+            &seed,
+            &t.preouts[i],
+            &t.proofs[i],
+        )?);
     }
 
-    let hands: Vec<[Card; HAND_SIZE]> = t.preouts.iter().map(cards_from_preout).collect();
+    let hands: Vec<[Card; HAND_SIZE]> = outputs.iter().map(cards_from_vrf_output).collect();
     let ranks: Vec<HandRank> = hands.iter().map(evaluate_hand).collect();
-    let winner = decide_winner(&t.preouts, &ranks);
+    let winner = decide_winner(&outputs, &ranks);
     if winner != t.winner {
         return Err(Error::WrongWinner {
             claimed: t.winner,
@@ -473,9 +647,9 @@ mod tests {
 
     #[test]
     fn card_mapping_is_deterministic_and_in_range() {
-        let preout = [42u8; 32];
-        let a = cards_from_preout(&preout);
-        let b = cards_from_preout(&preout);
+        let output = [42u8; 32];
+        let a = cards_from_vrf_output(&output);
+        let b = cards_from_vrf_output(&output);
         assert_eq!(a, b);
         for card in a {
             assert!((2..=14).contains(&card.rank));
@@ -483,8 +657,41 @@ mod tests {
         }
         assert_ne!(
             a,
-            cards_from_preout(&[43u8; 32]),
-            "different preout, different hand"
+            cards_from_vrf_output(&[43u8; 32]),
+            "different VRF output, different hand"
+        );
+    }
+
+    #[test]
+    fn signer_and_verifier_derive_the_same_vrf_output() {
+        let player = Player::from_seed([3; 32]);
+        let seed = [77u8; 32];
+        let draw = player.draw(&seed);
+        let verified = verify_draw(0, &player.public(), &seed, &draw.preout, &draw.proof)
+            .expect("honest draw verifies");
+        assert_eq!(
+            draw.output, verified,
+            "hand must not depend on who computed it"
+        );
+    }
+
+    #[test]
+    fn vrf_output_is_not_the_raw_preout() {
+        // make_bytes commits to input *and* output; the pre-output is only the
+        // output point. Confusing the two is the bug this guards against.
+        let player = Player::from_seed([5; 32]);
+        let draw = player.draw(&[1u8; 32]);
+        assert_ne!(draw.output, draw.preout);
+    }
+
+    #[test]
+    fn same_key_different_seed_gives_different_hand() {
+        let player = Player::from_seed([11; 32]);
+        let a = player.draw(&[1u8; 32]);
+        let b = player.draw(&[2u8; 32]);
+        assert_ne!(
+            cards_from_vrf_output(&a.output),
+            cards_from_vrf_output(&b.output)
         );
     }
 
@@ -541,6 +748,138 @@ mod tests {
         assert!(matches!(
             verify_transcript(&t),
             Err(Error::WrongWinner { .. })
+        ));
+    }
+
+    #[test]
+    fn preset_secret_is_used_and_then_consumed() {
+        let mut p = Player::from_seed([21; 32]);
+        let mine = secret_from_passphrase("correct horse battery staple");
+        p.preset_secret(mine);
+
+        let commitment = p.commit();
+        assert_eq!(p.reveal(), mine, "commit must use the secret I supplied");
+        assert_eq!(commitment, commitment_hash(&p.public(), &mine));
+
+        // Round two: the preset is spent, so fresh randomness is drawn.
+        // Reusing a commit-reveal secret would make the next round predictable
+        // to anyone who saw the first reveal.
+        p.commit();
+        assert_ne!(p.reveal(), mine, "preset must not carry into a later round");
+    }
+
+    #[test]
+    fn a_human_contribution_changes_the_whole_deal() {
+        let deal = |passphrase: &str| {
+            let mut players: Vec<Player> = (0..3u8).map(|i| Player::from_seed([i; 32])).collect();
+            players[0].preset_secret(secret_from_passphrase(passphrase));
+            let (t, outcome) = play_game(&mut players);
+            verify_transcript(&t).expect("verifies");
+            outcome.hands
+        };
+        assert_ne!(
+            deal("hunter2"),
+            deal("hunter3"),
+            "one character of my passphrase must change the deal"
+        );
+    }
+
+    #[test]
+    fn passphrase_derivation_is_deterministic_and_separated() {
+        assert_eq!(
+            secret_from_passphrase("same"),
+            secret_from_passphrase("same")
+        );
+        assert_ne!(secret_from_passphrase("a"), secret_from_passphrase("b"));
+        // Domain separation: not a bare SHA-256 of the passphrase.
+        let bare: [u8; 32] = Sha256::digest(b"a").into();
+        assert_ne!(secret_from_passphrase("a"), bare);
+    }
+
+    #[test]
+    fn transcript_survives_a_json_roundtrip() {
+        let mut players: Vec<Player> = (0..4u8).map(|i| Player::from_seed([i; 32])).collect();
+        let (t, outcome) = play_game(&mut players);
+
+        let decoded = Transcript::from_json(&t.to_json()).expect("roundtrip decodes");
+        assert_eq!(decoded, t);
+
+        // The real point: a transcript that crossed the wire still verifies.
+        let reverified = verify_transcript(&decoded).expect("decoded transcript verifies");
+        assert_eq!(reverified.winner, outcome.winner);
+        assert_eq!(reverified.hands, outcome.hands);
+        assert_eq!(reverified.seed, outcome.seed);
+    }
+
+    #[test]
+    fn reformatted_json_still_verifies() {
+        let mut players: Vec<Player> = (0..3u8).map(|i| Player::from_seed([i; 32])).collect();
+        let (t, _) = play_game(&mut players);
+
+        // Whitespace is not part of the security surface — verification reads
+        // decoded fields, never the document text.
+        let compact = t.to_json().replace(['\n', ' '], "");
+        let decoded = Transcript::from_json(&compact).expect("compact JSON decodes");
+        assert!(verify_transcript(&decoded).is_ok());
+    }
+
+    #[test]
+    fn tampering_with_serialized_json_is_caught() {
+        let mut players: Vec<Player> = (0..3u8).map(|i| Player::from_seed([i; 32])).collect();
+        let (t, _) = play_game(&mut players);
+
+        // Flip one hex nibble of player 1's reveal inside the document.
+        let original = hex::encode(t.reveals[1]);
+        let mut flipped: Vec<char> = original.chars().collect();
+        flipped[0] = if flipped[0] == '0' { '1' } else { '0' };
+        let flipped: String = flipped.into_iter().collect();
+        let json = t.to_json().replace(&original, &flipped);
+
+        let decoded = Transcript::from_json(&json).expect("still well-formed JSON");
+        assert!(matches!(
+            verify_transcript(&decoded),
+            Err(Error::CommitmentMismatch { player: 1 })
+        ));
+    }
+
+    #[test]
+    fn malformed_documents_are_rejected() {
+        let mut players: Vec<Player> = (0..3u8).map(|i| Player::from_seed([i; 32])).collect();
+        let (t, _) = play_game(&mut players);
+        let json = t.to_json();
+
+        assert!(matches!(
+            Transcript::from_json("not json at all"),
+            Err(Error::Encoding { .. })
+        ));
+        // Truncated field: right hex, wrong length.
+        let short = json.replace(&hex::encode(t.pubkeys[0]), "abcd");
+        assert!(matches!(
+            Transcript::from_json(&short),
+            Err(Error::Encoding { .. })
+        ));
+        // Non-hex characters.
+        let non_hex = json.replace(&hex::encode(t.proofs[0]), "zz");
+        assert!(matches!(
+            Transcript::from_json(&non_hex),
+            Err(Error::Encoding { .. })
+        ));
+    }
+
+    #[test]
+    fn future_wire_versions_are_refused() {
+        let mut players: Vec<Player> = (0..3u8).map(|i| Player::from_seed([i; 32])).collect();
+        let (t, _) = play_game(&mut players);
+        let bumped = t.to_json().replace(
+            &format!("\"version\": {TRANSCRIPT_VERSION}"),
+            "\"version\": 99",
+        );
+        assert!(matches!(
+            Transcript::from_json(&bumped),
+            Err(Error::UnsupportedVersion {
+                found: 99,
+                expected: TRANSCRIPT_VERSION
+            })
         ));
     }
 
