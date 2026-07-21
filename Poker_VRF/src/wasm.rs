@@ -5,6 +5,7 @@
 //! needs testing belongs there, not here.
 
 use crate::api;
+use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 
 /// Play a game and return a `GameView` as JSON.
@@ -35,4 +36,35 @@ pub fn evaluate(cards: &str) -> String {
 #[wasm_bindgen]
 pub fn transcript_version() -> u32 {
     crate::TRANSCRIPT_VERSION
+}
+
+// ---------------------------------------------------------------------------
+// Catch the Cheat
+// ---------------------------------------------------------------------------
+
+// One run per tab. The session lives here rather than in JS specifically so the
+// round's verdict never crosses the boundary before the player has answered —
+// that is what makes the published commitment a promise instead of a prop.
+thread_local! {
+    static SESSION: RefCell<api::Session> = RefCell::new(api::Session::new());
+}
+
+/// Deal the next round. Returns a `RoundView` as JSON — no verdict in it.
+#[wasm_bindgen]
+pub fn round_deal(players: usize) -> String {
+    SESSION.with(|s| s.borrow_mut().deal(players))
+}
+
+/// Answer the pending round; `true` means "this one was tampered with".
+///
+/// Returns an `AnswerView` as JSON, or `null` if no round is pending.
+#[wasm_bindgen]
+pub fn round_answer(guess_tampered: bool) -> String {
+    SESSION.with(|s| s.borrow_mut().answer(guess_tampered))
+}
+
+/// Start a fresh run.
+#[wasm_bindgen]
+pub fn round_reset() {
+    SESSION.with(|s| s.borrow_mut().reset())
 }

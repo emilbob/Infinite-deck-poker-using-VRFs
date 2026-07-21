@@ -8,6 +8,7 @@
 //! [`Transcript`] already has a versioned wire format, so reusing it here keeps
 //! one encoding for the browser, the disk, and any third-party verifier.
 
+use crate::cheats::{deal_round, pick_cheat, Round, Tier};
 use crate::{
     evaluate_hand, play_game, secret_from_passphrase, verify_transcript, Card, HandRank, Outcome,
     Player, Transcript,
@@ -144,6 +145,120 @@ pub fn evaluate_json(cards: &str) -> String {
         .expect("RankView is always serializable")
 }
 
+// ---------------------------------------------------------------------------
+// Catch the Cheat
+// ---------------------------------------------------------------------------
+
+/// A round as the player sees it *before* answering.
+///
+/// Deliberately carries no verdict, no nonce and no cheat — only the
+/// commitment. The answer is withheld in [`Session`] rather than shipped and
+/// hidden by the UI, so the commitment is a real promise instead of a prop.
+#[derive(Serialize)]
+pub struct RoundView {
+    pub round: usize,
+    pub total: usize,
+    pub commitment: String,
+    pub transcript_json: String,
+    pub outcome: OutcomeView,
+    pub score: usize,
+    pub answered: usize,
+}
+
+/// What the player gets back once they have committed to an answer.
+#[derive(Serialize)]
+pub struct AnswerView {
+    pub correct: bool,
+    pub tampered: bool,
+    pub cheat: String,
+    pub tier: Option<Tier>,
+    pub explanation: String,
+    /// The verifier's own verdict, so the claim is never taken on trust.
+    pub verifier_error: Option<String>,
+    /// Opening of the commitment: the player can re-hash these and check.
+    pub nonce: String,
+    pub commitment: String,
+    pub score: usize,
+    pub answered: usize,
+    pub total: usize,
+    pub finished: bool,
+}
+
+const ROUNDS: usize = 10;
+
+/// A ten-round run. Holds the pending round's answer so it cannot be read off
+/// the wire before the player has committed to a guess.
+#[derive(Default)]
+pub struct Session {
+    pending: Option<Round>,
+    round: usize,
+    score: usize,
+    answered: usize,
+}
+
+impl Session {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Deal the next round. Re-dealing without answering forfeits nothing —
+    /// the previous round is simply replaced, which also means a player cannot
+    /// farm attempts at the same transcript.
+    pub fn deal(&mut self, players: usize) -> String {
+        let round = deal_round(players, pick_cheat(self.round));
+        let view = RoundView {
+            round: self.round,
+            total: ROUNDS,
+            commitment: hex::encode(round.commitment),
+            transcript_json: round.transcript.to_json(),
+            outcome: OutcomeView::from(&round.outcome),
+            score: self.score,
+            answered: self.answered,
+        };
+        self.pending = Some(round);
+        serde_json::to_string(&view).expect("RoundView is always serializable")
+    }
+
+    /// Answer the pending round. `guess_tampered` is the player's verdict.
+    ///
+    /// Returns `null` if there is no pending round, rather than inventing one.
+    pub fn answer(&mut self, guess_tampered: bool) -> String {
+        let Some(round) = self.pending.take() else {
+            return "null".to_string();
+        };
+
+        let tampered = round.is_tampered();
+        let correct = guess_tampered == tampered;
+        if correct {
+            self.score += 1;
+        }
+        self.answered += 1;
+        self.round += 1;
+
+        let view = AnswerView {
+            correct,
+            tampered,
+            cheat: round.cheat.label().to_string(),
+            tier: round.cheat.tier(),
+            explanation: round.cheat.explanation().to_string(),
+            verifier_error: verify_transcript(&round.transcript)
+                .err()
+                .map(|e| e.to_string()),
+            nonce: hex::encode(round.nonce),
+            commitment: hex::encode(round.commitment),
+            score: self.score,
+            answered: self.answered,
+            total: ROUNDS,
+            finished: self.answered >= ROUNDS,
+        };
+        serde_json::to_string(&view).expect("AnswerView is always serializable")
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +323,97 @@ mod tests {
         assert_eq!(one["outcome"]["hands"].as_array().unwrap().len(), 2);
         let many: Value = serde_json::from_str(&deal_json(500, None)).unwrap();
         assert_eq!(many["outcome"]["hands"].as_array().unwrap().len(), 10);
+    }
+
+    #[test]
+    fn a_dealt_round_leaks_nothing_about_the_verdict() {
+        // The whole point of holding the answer in Session: if any of these
+        // appeared in the payload, the commitment would be theatre.
+        for _ in 0..20 {
+            let mut s = Session::new();
+            let raw = s.deal(3);
+            let v: Value = serde_json::from_str(&raw).unwrap();
+            assert!(v.get("tampered").is_none(), "verdict leaked");
+            assert!(v.get("cheat").is_none(), "cheat leaked");
+            assert!(
+                v.get("nonce").is_none(),
+                "nonce leaked — commitment openable"
+            );
+            assert!(v.get("tier").is_none(), "tier leaked");
+            assert!(v["commitment"].as_str().unwrap().len() == 64);
+        }
+    }
+
+    #[test]
+    fn the_commitment_opens_to_the_answer_given() {
+        use crate::cheats::verdict_commitment;
+        for guess in [true, false] {
+            let mut s = Session::new();
+            let dealt: Value = serde_json::from_str(&s.deal(3)).unwrap();
+            let answered: Value = serde_json::from_str(&s.answer(guess)).unwrap();
+
+            assert_eq!(
+                dealt["commitment"], answered["commitment"],
+                "the round must be judged against the commitment it published"
+            );
+
+            // Re-hash exactly as a suspicious player would.
+            let nonce: [u8; 32] = hex::decode(answered["nonce"].as_str().unwrap())
+                .unwrap()
+                .try_into()
+                .unwrap();
+            let tampered = answered["tampered"].as_bool().unwrap();
+            assert_eq!(
+                hex::encode(verdict_commitment(tampered, &nonce)),
+                answered["commitment"].as_str().unwrap(),
+                "commitment must open to the verdict actually reported"
+            );
+        }
+    }
+
+    #[test]
+    fn scoring_follows_the_verifier_not_the_label() {
+        // `correct` must agree with what verify_transcript actually says, or the
+        // game could mark a truthful player wrong.
+        let mut s = Session::new();
+        for _ in 0..30 {
+            let _ = s.deal(3);
+            let a: Value = serde_json::from_str(&s.answer(true)).unwrap();
+            let tampered = a["tampered"].as_bool().unwrap();
+            let rejected = !a["verifier_error"].is_null();
+            assert_eq!(
+                tampered, rejected,
+                "declared verdict disagrees with the verifier: {a}"
+            );
+            assert_eq!(a["correct"].as_bool().unwrap(), tampered);
+        }
+    }
+
+    #[test]
+    fn a_run_finishes_after_ten_rounds() {
+        let mut s = Session::new();
+        let mut last = Value::Null;
+        for i in 0..10 {
+            let _ = s.deal(3);
+            last = serde_json::from_str(&s.answer(false)).unwrap();
+            assert_eq!(last["answered"], i + 1);
+        }
+        assert_eq!(last["finished"], true);
+        assert!(last["score"].as_u64().unwrap() <= 10);
+    }
+
+    #[test]
+    fn answering_without_a_round_is_null_not_a_guess() {
+        let mut s = Session::new();
+        assert_eq!(s.answer(true), "null");
+        // And a round cannot be answered twice.
+        let _ = s.deal(3);
+        assert_ne!(s.answer(true), "null");
+        assert_eq!(
+            s.answer(true),
+            "null",
+            "the same round must not be re-scored"
+        );
     }
 
     #[test]

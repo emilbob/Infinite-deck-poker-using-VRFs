@@ -5,7 +5,14 @@
  * this module owns the parsing and the types. Nothing else in the app should
  * import from 'Poker_VRF' directly.
  */
-import init, { deal, verify, transcript_version } from 'Poker_VRF'
+import init, {
+  deal,
+  verify,
+  transcript_version,
+  round_deal,
+  round_answer,
+  round_reset,
+} from 'Poker_VRF'
 
 export type CardView = { rank: number; suit: number; label: string }
 export type RankView = { category: string; tiebreak: number[] }
@@ -65,4 +72,55 @@ export async function verifyDocument(document: string): Promise<VerifyView> {
 export async function wireVersion(): Promise<number> {
   await initEngine()
   return transcript_version()
+}
+
+// --- Catch the Cheat -------------------------------------------------------
+
+export type Tier = 'ByEye' | 'ByArithmetic' | 'Impossible'
+
+/**
+ * A round before the player answers. Note what is absent: no verdict, no
+ * nonce, no cheat. The engine holds those until an answer is submitted, so the
+ * commitment below is a real promise rather than something the UI merely
+ * declines to display.
+ */
+export type RoundView = {
+  round: number
+  total: number
+  commitment: string
+  transcript_json: string
+  outcome: OutcomeView
+  score: number
+  answered: number
+}
+
+export type AnswerView = {
+  correct: boolean
+  tampered: boolean
+  cheat: string
+  tier: Tier | null
+  explanation: string
+  verifier_error: string | null
+  nonce: string
+  commitment: string
+  score: number
+  answered: number
+  total: number
+  finished: boolean
+}
+
+export async function roundDeal(players: number): Promise<RoundView> {
+  await initEngine()
+  return JSON.parse(round_deal(players))
+}
+
+/** Returns `null` if no round is pending — the same round cannot be scored twice. */
+export async function roundAnswer(guessTampered: boolean): Promise<AnswerView | null> {
+  await initEngine()
+  return JSON.parse(round_answer(guessTampered))
+}
+
+export async function roundReset(): Promise<void> {
+  await initEngine()
+  round_reset()
 }
