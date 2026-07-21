@@ -73,7 +73,7 @@ export function TranscriptPanel({ document }: Props) {
   return (
     <section className="flex flex-col gap-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-base font-medium">Transcript</h2>
+        <h2 className="display text-2xl">Transcript</h2>
         <Status checking={checking} result={result} />
       </div>
 
@@ -82,22 +82,22 @@ export function TranscriptPanel({ document }: Props) {
         re-runs as you type.
       </p>
 
-      <div className="border-line bg-panel divide-line grid grid-cols-2 divide-x divide-y rounded-lg border sm:grid-cols-4 sm:divide-y-0">
+      <div className="border-line bg-panel divide-line grid grid-cols-2 divide-x divide-y border-2 sm:grid-cols-4 sm:divide-y-0">
         {CHECKS.map((c) => (
           <Check key={c} label={c} state={checking || !result ? 'idle' : result.ok} />
         ))}
       </div>
 
       {result && !result.ok && !checking && (
-        <p className="border-bad/40 bg-bad/10 text-bad rounded-lg border px-3 py-2 text-sm">
+        <p className="border-bad bg-bad/10 text-bad border-2 px-3 py-2 text-sm">
           {result.error}
         </p>
       )}
 
-      <div className="border-accent/30 bg-accent/[0.06] flex flex-col gap-3 rounded-lg border p-4">
+      <div className="border-acid bg-acid/[0.07] flex flex-col gap-3 border-2 p-4">
         <div>
-          <h3 className="text-sm font-medium">Try to break it</h3>
-          <p className="text-muted mt-1 text-xs leading-relaxed">
+          <h3 className="display text-xl">Try to break it</h3>
+          <p className="text-muted mt-1 text-sm leading-relaxed">
             Each button below forges part of the game. The verifier should reject all of them and
             tell you exactly which check failed — except <em>Reformat</em>, which only reshuffles
             whitespace and must still pass.
@@ -113,15 +113,15 @@ export function TranscriptPanel({ document }: Props) {
       </div>
 
       <details className="group">
-        <summary className="text-faint hover:text-muted cursor-pointer text-xs transition-colors">
+        <summary className="text-faint hover:text-muted cursor-pointer text-sm transition-colors">
           Raw document — edit any byte by hand
         </summary>
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           spellCheck={false}
-          className="mono border-line bg-panel text-muted focus:border-accent/60 mt-2 h-72 w-full
-                     resize-y rounded-lg border p-3 text-xs leading-relaxed outline-none"
+          className="mono border-line bg-panel text-muted focus:border-acid mt-2 h-72 w-full
+                     resize-y border-2 p-3 text-[13px] leading-relaxed outline-none"
         />
       </details>
     </section>
@@ -137,15 +137,15 @@ function Status({ checking, result }: { checking: boolean; result: VerifyView | 
 
 function Pill({ tone, children }: { tone: 'ok' | 'bad' | 'idle'; children: React.ReactNode }) {
   const styles = {
-    ok: 'text-ok bg-ok/10 border-ok/30',
-    bad: 'text-bad bg-bad/10 border-bad/30',
+    ok: 'text-acid bg-acid/10 border-acid',
+    bad: 'text-bad bg-bad/10 border-bad',
     idle: 'text-faint bg-raised border-line',
   }[tone]
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${styles}`}
+      className={`label inline-flex items-center gap-1.5 border-2 px-2.5 py-1 ${styles}`}
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      <span className="h-2 w-2 bg-current" />
       {children}
     </span>
   )
@@ -156,14 +156,14 @@ function Check({ label, state }: { label: string; state: boolean | 'idle' }) {
     state === 'idle' ? (
       <span className="text-faint">·</span>
     ) : state ? (
-      <span className="text-ok">✓</span>
+      <span className="text-acid">✓</span>
     ) : (
       <span className="text-bad">✕</span>
     )
   return (
     <div className="flex items-center gap-2 px-3 py-2.5">
       <span className="w-3 text-center text-sm">{mark}</span>
-      <span className="text-muted text-xs">{label}</span>
+      <span className="text-muted text-sm">{label}</span>
     </div>
   )
 }
@@ -172,8 +172,8 @@ function Action({ onClick, children }: { onClick: () => void; children: React.Re
   return (
     <button
       onClick={onClick}
-      className="border-line bg-raised text-muted hover:border-faint hover:text-ink rounded-md
-                 border px-2.5 py-1 text-xs transition-colors"
+      className="border-line bg-raised text-muted hover:border-acid hover:text-acid
+                 border-2 px-3 py-1.5 text-sm transition-colors"
     >
       {children}
     </button>

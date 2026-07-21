@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { dealGame, wireVersion, type GameView } from './engine'
 import { Table } from './components/Table'
 import { TranscriptPanel } from './components/TranscriptPanel'
+import { SeedFingerprint } from './components/SeedFingerprint'
 
 export default function App() {
   const [game, setGame] = useState<GameView | null>(null)
@@ -32,16 +33,20 @@ export default function App() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <main className="mx-auto flex max-w-3xl flex-col gap-10 px-5 py-12">
-      <header className="flex flex-col gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">Infinite-deck poker on VRFs</h1>
-        <p className="text-muted max-w-2xl text-sm leading-relaxed">
+    <>
+      <main className="mx-auto flex max-w-3xl flex-col gap-10 px-5 py-14">
+      <header className="flex flex-col">
+        <div className="bg-acid text-base px-4 py-3">
+          <h1 className="display text-4xl sm:text-6xl">Infinite-deck poker</h1>
+          <p className="label mt-1">VRF / SR25519 / RISTRETTO255 / NO SERVER</p>
+        </div>
+        <p className="text-muted border-line mt-0 max-w-2xl border-2 border-t-0 p-4 text-base leading-relaxed">
           Provably fair dealing built on sr25519 verifiable random functions. The engine is Rust
           compiled to WebAssembly — dealing and verification both run in this tab, with no server
           involved. Your hand is a function of the shared seed and your key, so nobody, this page
           included, can steer it.
         </p>
-        <dl className="text-faint flex flex-wrap gap-x-5 gap-y-1 text-xs">
+        <dl className="text-faint label mt-4 flex flex-wrap gap-x-6 gap-y-1">
           <Meta label="Curve" value="Ristretto255 / sr25519" />
           <Meta label="Hash" value="SHA-256" />
           {version !== null && <Meta label="Transcript" value={`v${version}`} />}
@@ -50,7 +55,7 @@ export default function App() {
 
       <HowItWorks />
 
-      <section className="border-line bg-panel flex flex-wrap items-end gap-4 rounded-lg border p-4">
+      <section className="border-line bg-panel flex flex-wrap items-end gap-4 border-2 p-4">
         <Field label="Seats" className="w-20">
           <input
             type="number"
@@ -58,7 +63,7 @@ export default function App() {
             max={10}
             value={seats}
             onChange={(e) => setSeats(Number(e.target.value))}
-            className="border-line bg-raised focus:border-accent/60 w-full rounded-md border px-2.5 py-1.5 text-sm outline-none"
+            className="border-line bg-raised focus:border-acid w-full border-2 px-2.5 py-1.5 text-sm outline-none"
           />
         </Field>
 
@@ -67,24 +72,24 @@ export default function App() {
             value={passphrase}
             onChange={(e) => setPassphrase(e.target.value)}
             placeholder="Passphrase — or leave blank to use the system RNG"
-            className="border-line bg-raised placeholder:text-faint focus:border-accent/60 w-full rounded-md border px-2.5 py-1.5 text-sm outline-none"
+            className="border-line bg-raised placeholder:text-faint focus:border-acid w-full border-2 px-2.5 py-1.5 text-sm outline-none"
           />
         </Field>
 
         <button
           onClick={() => void deal()}
           disabled={dealing}
-          className="bg-accent rounded-md px-5 py-1.5 text-sm font-medium text-[#0b1020]
-                     transition-opacity hover:opacity-90 disabled:opacity-40"
+          className="bg-acid display text-base px-8 py-2.5 text-lg transition-opacity
+                     hover:opacity-80 disabled:opacity-40"
         >
           {dealing ? 'Dealing…' : 'Deal'}
         </button>
       </section>
 
       {error && (
-        <div className="border-bad/40 bg-bad/10 text-bad rounded-lg border px-4 py-3 text-sm">
+        <div className="border-bad bg-bad/10 text-bad border-2 px-4 py-3 text-sm">
           <strong className="font-medium">The engine failed to run.</strong>{' '}
-          <span className="mono text-xs">{error}</span>
+          <span className="mono text-sm">{error}</span>
         </div>
       )}
 
@@ -93,14 +98,19 @@ export default function App() {
       {game && (
         <>
           <section className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="text-base font-medium">The deal</h2>
-              <p className="text-faint mono text-xs break-all">
-                seed {game.outcome.seed.slice(0, 16)}…{game.outcome.seed.slice(-16)}
-              </p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="display text-2xl">The deal</h2>
+              <div className="flex items-center gap-3">
+                <span className="text-faint mono text-xs">
+                  {game.outcome.seed.slice(0, 8)}…{game.outcome.seed.slice(-8)}
+                </span>
+                <div className="w-32">
+                  <SeedFingerprint seed={game.outcome.seed} />
+                </div>
+              </div>
             </div>
             <Table outcome={game.outcome} />
-            <p className="text-faint text-xs leading-relaxed">
+            <p className="text-muted text-sm leading-relaxed">
               Infinite deck: every card is an independent draw, so duplicates are legal and a hand
               like <span className="mono">K♥ K♥ 9♠</span> is not a bug. It also means{' '}
               <strong className="text-muted font-medium">five of a kind</strong> exists, and it
@@ -112,7 +122,7 @@ export default function App() {
         </>
       )}
 
-      <footer className="border-line text-faint flex flex-col gap-3 border-t pt-6 text-xs">
+      <footer className="border-line text-muted flex flex-col gap-3 border-t pt-6 text-sm">
         <p className="max-w-2xl leading-relaxed">
           This is a demonstration <em>of</em> the protocol rather than a fair game under it: one tab
           holds every player&apos;s secret, so whoever reveals last could steer the seed. Real
@@ -125,7 +135,8 @@ export default function App() {
           Source on GitHub
         </a>
       </footer>
-    </main>
+      </main>
+    </>
   )
 }
 
@@ -154,16 +165,16 @@ function HowItWorks() {
   ]
 
   return (
-    <section className="border-line bg-panel grid gap-px overflow-hidden rounded-lg border sm:grid-cols-3">
+    <section className="border-line bg-line grid gap-0.5 border-2 sm:grid-cols-3">
       {steps.map((s) => (
         <div key={s.n} className="bg-panel flex flex-col gap-1.5 p-4">
           <div className="flex items-center gap-2">
-            <span className="border-line text-faint flex h-5 w-5 items-center justify-center rounded-full border text-[11px]">
+            <span className="bg-acid text-base label flex h-5 w-6 items-center justify-center">
               {s.n}
             </span>
-            <h2 className="text-sm font-medium">{s.title}</h2>
+            <h2 className="display text-lg">{s.title}</h2>
           </div>
-          <p className="text-muted text-xs leading-relaxed">{s.body}</p>
+          <p className="text-muted text-sm leading-relaxed">{s.body}</p>
         </div>
       ))}
     </section>
@@ -190,7 +201,7 @@ function Field({
 }) {
   return (
     <label className={`flex flex-col gap-1.5 ${className}`}>
-      <span className="text-faint text-xs">{label}</span>
+      <span className="text-faint label">{label}</span>
       {children}
     </label>
   )

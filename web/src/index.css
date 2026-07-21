@@ -1,27 +1,43 @@
 @import 'tailwindcss';
 
 @theme {
-  /* Neutral dark UI. Colour is reserved for state (verified / rejected) and
-     one quiet accent — nothing decorative is tinted. */
-  --color-base: #0c0e12;
-  --color-panel: #14171d;
-  --color-raised: #1b1f27;
-  --color-line: #272c35;
-  --color-faint: #6b7480;
-  --color-muted: #98a1af;
-  --color-ink: #e7eaf0;
-  --color-accent: #6b96f0;
-  --color-ok: #3ecf8e;
-  --color-bad: #f2686b;
+  /* Concrete. Warm-neutral greys, not blue-black — this should read as a
+     material, not a screen. */
+  --color-base: #0d0d0c;
+  --color-panel: #151513;
+  --color-raised: #1e1e1b;
+  --color-line: #35352e;
+  --color-faint: #8d8d82;
+  --color-muted: #b0b0a4;
+  --color-ink: #e8e8df;
 
-  /* Card faces are physical objects, so they keep a warm paper white. */
-  --color-card: #f7f5f1;
-  --color-card-ink: #17181b;
-  --color-card-red: #c0392b;
+  /* One acid accent does all the work: primary action, verified state,
+     emphasis. Nothing else is coloured except failure. */
+  --color-acid: #d4ff00;
+  --color-bad: #ff3b1f;
 
-  --font-sans:
-    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif;
+  /* Card stock: bone, not white. */
+  --color-card: #e9e9e0;
+  --color-card-ink: #0d0d0c;
+  /* 5.31:1 on the bone card stock — the 12px corner ranks need AA, and a
+     brighter red measured 3.96:1. */
+  --color-card-red: #b81f0c;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-display:
+    'Arial Narrow', 'Helvetica Neue Condensed', 'Roboto Condensed', ui-sans-serif, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+
+  /* Nothing is rounded. Overriding the radius scale globally means every
+     existing rounded-* class flattens without touching each component. */
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+  --radius-4xl: 0px;
 }
 
 html,
@@ -34,11 +50,64 @@ body {
   background: var(--color-base);
   color: var(--color-ink);
   font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
+  font-size: 16px;
+  line-height: 1.55;
+  /* Not `antialiased`: it thins glyphs, and this look wants weight. */
 }
 
-/* Hex and JSON only — never UI chrome. */
+/* Condensed uppercase display type — the poster voice. */
+.display {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  font-weight: 700;
+  line-height: 1.02;
+}
+
+.label {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .mono {
   font-family: var(--font-mono);
   font-variant-ligatures: none;
+}
+
+/* Hard-edged card flip. No perspective softening, no easing bounce. */
+.card-scene {
+  perspective: 1000px;
+}
+
+.card-inner {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.card-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.card-face--back {
+  transform: rotateY(180deg);
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-raised) 0 4px,
+    var(--color-base) 4px 8px
+  );
+  border: 2px solid var(--color-line);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-inner {
+    transform: none !important;
+  }
 }
