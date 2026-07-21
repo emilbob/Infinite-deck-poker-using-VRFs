@@ -3,10 +3,12 @@ import type { CardView } from '../engine'
 /** Suits 1 (♦) and 2 (♥) are the red ones — matches SUITS in lib.rs. */
 const isRed = (suit: number) => suit === 1 || suit === 2
 
+const SUIT_NAMES = ['clubs', 'diamonds', 'hearts', 'spades']
+
 /**
- * A real card face: warm paper white, rank in the corners, suit in the middle.
- * Rank and suit are split from the engine's rendered label so the corner and
- * centre can be typeset separately.
+ * A real card face on a flippable scene. `.card-inner` is what the deal
+ * animation rotates; the reverse face carries the patterned back, so cards
+ * turn over rather than fading in.
  */
 export function PlayingCard({ card }: { card: CardView }) {
   const rank = card.label.slice(0, -1)
@@ -15,18 +17,32 @@ export function PlayingCard({ card }: { card: CardView }) {
 
   return (
     <div
-      className={`card bg-card relative flex h-[4.75rem] w-[3.25rem] shrink-0 flex-col
-                  justify-between rounded-[5px] px-1.5 py-1 shadow-sm shadow-black/50
-                  ring-1 ring-black/25 select-none ${ink}`}
-      aria-label={`${rank} of ${['clubs', 'diamonds', 'hearts', 'spades'][card.suit]}`}
+      className="card-scene group h-[4.9rem] w-[3.4rem] shrink-0"
+      aria-label={`${rank} of ${SUIT_NAMES[card.suit]}`}
     >
-      <span className="text-[11px] leading-none font-semibold tracking-tight">{rank}</span>
-      <span className="absolute inset-0 flex items-center justify-center text-[19px] leading-none">
-        {suit}
-      </span>
-      <span className="rotate-180 self-end text-[11px] leading-none font-semibold tracking-tight">
-        {rank}
-      </span>
+      {/* Hover lift lives on its own wrapper: GSAP owns `.card-inner`'s
+          transform during the flip, and a CSS transition on the same property
+          would fight it every frame. */}
+      <div className="h-full w-full transition-transform duration-200 group-hover:-translate-y-1">
+        <div className="card-inner">
+          {/* Face */}
+          <div
+            className={`card-face bg-card flex flex-col justify-between px-1.5 py-1
+                        border-2 border-black/70 select-none ${ink}`}
+          >
+            <span className="text-xs leading-none font-semibold tracking-tight">{rank}</span>
+            <span className="absolute inset-0 flex items-center justify-center text-[22px] leading-none">
+              {suit}
+            </span>
+            <span className="rotate-180 self-end text-xs leading-none font-semibold tracking-tight">
+              {rank}
+            </span>
+          </div>
+
+          {/* Reverse */}
+          <div className="card-face card-face--back" />
+        </div>
+      </div>
     </div>
   )
 }
