@@ -99,7 +99,14 @@ export function CatchTheCheat() {
         </div>
       )}
 
-      {answer && <Result answer={answer} onNext={() => void next()} onRestart={() => void restart()} done={done} />}
+      {answer && (
+        <Result
+          answer={answer}
+          onNext={() => void next()}
+          onRestart={() => void restart()}
+          done={done}
+        />
+      )}
     </section>
   )
 }

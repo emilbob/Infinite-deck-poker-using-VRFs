@@ -43,6 +43,16 @@ const CARDS_DOMAIN: &[u8] = b"poker-vrf.cards.v1";
 
 const HAND_SIZE: usize = 5;
 
+/// Cards in a suit-complete deck. The deck is infinite, but each *draw* is
+/// uniform over these 52 possibilities.
+const DECK: u8 = 52;
+
+/// Largest multiple of [`DECK`] that fits in a byte (4 × 52). Bytes at or above
+/// this are rejected rather than folded, which is what removes modulo bias —
+/// 256 is not a multiple of 52, so folding all 256 values would make the first
+/// 48 cards 25% likelier than the last 4.
+const REJECTION_BOUND: u8 = 208;
+
 /// Wire-format version written into every serialized [`Transcript`].
 pub const TRANSCRIPT_VERSION: u32 = 1;
 
@@ -226,8 +236,8 @@ pub fn cards_from_vrf_output(vrf_output: &[u8; 32]) -> [Card; HAND_SIZE] {
         .into();
     loop {
         for byte in block {
-            if byte < 208 {
-                let idx = byte % 52;
+            if byte < REJECTION_BOUND {
+                let idx = byte % DECK;
                 cards[found] = Card {
                     rank: 2 + idx % 13,
                     suit: idx / 13,
@@ -664,6 +674,116 @@ mod tests {
             a,
             cards_from_vrf_output(&[43u8; 32]),
             "different VRF output, different hand"
+        );
+    }
+
+    /// Index a card the way `cards_from_vrf_output` does: `idx = suit*13 + rank-2`.
+    fn deck_index(c: &Card) -> usize {
+        c.suit as usize * 13 + (c.rank - 2) as usize
+    }
+
+    /// Pearson's chi-square against a uniform distribution over 52 outcomes.
+    fn chi_square_vs_uniform(counts: &[u32; 52]) -> f64 {
+        let total: u32 = counts.iter().sum();
+        let expected = f64::from(total) / 52.0;
+        counts
+            .iter()
+            .map(|&observed| {
+                let d = f64::from(observed) - expected;
+                d * d / expected
+            })
+            .sum()
+    }
+
+    /// 51 degrees of freedom. The chi-square critical value at p = 0.001 is
+    /// ~86.7; 110 leaves generous headroom while still being far below what
+    /// real modulo bias produces — see `the_uniformity_test_can_detect_bias`.
+    const CHI2_THRESHOLD: f64 = 110.0;
+
+    #[test]
+    fn card_sampling_is_uniform_over_the_deck() {
+        // Deterministic inputs, so this test cannot flake: it either passes for
+        // everyone forever or it is a real regression.
+        let mut counts = [0u32; 52];
+        for i in 0..20_000u64 {
+            let output: [u8; 32] = Sha256::digest(i.to_le_bytes()).into();
+            for card in cards_from_vrf_output(&output) {
+                counts[deck_index(&card)] += 1;
+            }
+        }
+
+        assert!(
+            counts.iter().all(|&n| n > 0),
+            "every card in the deck must be reachable"
+        );
+
+        let chi2 = chi_square_vs_uniform(&counts);
+        assert!(
+            chi2 < CHI2_THRESHOLD,
+            "card distribution is not uniform: chi-square {chi2:.1} over 51 df \
+             exceeds {CHI2_THRESHOLD}. The README claims rejection sampling \
+             removes modulo bias; this says otherwise."
+        );
+    }
+
+    #[test]
+    fn the_uniformity_test_can_detect_bias() {
+        // A test that only ever passes proves nothing. This runs the *naive*
+        // mapping the real code deliberately avoids — `byte % 52` with no
+        // rejection — and requires the same threshold to reject it.
+        //
+        // 256 = 4*52 + 48, so indices 0..47 land five times per 256 bytes and
+        // 48..51 only four: a 5:4 bias, exactly what rejection sampling exists
+        // to remove.
+        let mut counts = [0u32; 52];
+        for i in 0..20_000u64 {
+            let mut block: [u8; 32] = Sha256::digest(i.to_le_bytes()).into();
+            let mut taken = 0;
+            while taken < HAND_SIZE {
+                for byte in block {
+                    counts[(byte % 52) as usize] += 1;
+                    taken += 1;
+                    if taken == HAND_SIZE {
+                        break;
+                    }
+                }
+                block = Sha256::digest(block).into();
+            }
+        }
+
+        let chi2 = chi_square_vs_uniform(&counts);
+        assert!(
+            chi2 > CHI2_THRESHOLD,
+            "the biased sampler scored chi-square {chi2:.1}, below the {CHI2_THRESHOLD} \
+             threshold — so `card_sampling_is_uniform_over_the_deck` could not have \
+             detected real modulo bias either, and proves nothing"
+        );
+    }
+
+    #[test]
+    fn the_rejection_bound_is_the_largest_usable_multiple() {
+        // Derived, not restated: recompute the bound from the deck size rather
+        // than asserting facts about literals. Changing REJECTION_BOUND to
+        // anything that is not the largest multiple of DECK in a byte fails here.
+        let largest_multiple = (256u16 / u16::from(DECK)) * u16::from(DECK);
+        assert_eq!(
+            u16::from(REJECTION_BOUND),
+            largest_multiple,
+            "the bound must be the largest multiple of {DECK} that fits in a byte"
+        );
+
+        // And the property that buys: every accepted byte maps to a card, and
+        // each card is reachable from exactly the same number of bytes.
+        let mut hits = [0u32; DECK as usize];
+        for byte in 0..=u8::MAX {
+            if byte < REJECTION_BOUND {
+                hits[(byte % DECK) as usize] += 1;
+            }
+        }
+        let first = hits[0];
+        assert!(
+            hits.iter().all(|&h| h == first),
+            "accepted bytes must cover every card equally: {hits:?}"
         );
     }
 

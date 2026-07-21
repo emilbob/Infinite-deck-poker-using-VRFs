@@ -39,115 +39,114 @@ export default function App() {
   return (
     <>
       <main className="mx-auto flex max-w-3xl flex-col gap-10 px-5 py-14">
-      <header className="flex flex-col">
-        <div className="bg-acid text-base px-4 py-3">
-          <h1 className="display text-4xl sm:text-6xl">Infinite-deck poker</h1>
-          <p className="label mt-1">VRF / SR25519 / RISTRETTO255 / NO SERVER</p>
-        </div>
-        <p className="text-muted border-line mt-0 max-w-2xl border-2 border-t-0 p-4 text-base leading-relaxed">
-          Provably fair dealing built on sr25519 verifiable random functions. The engine is Rust
-          compiled to WebAssembly — dealing and verification both run in this tab, with no server
-          involved. Your hand is a function of the shared seed and your key, so nobody, this page
-          included, can steer it.
-        </p>
-        <dl className="text-faint label mt-4 flex flex-wrap gap-x-6 gap-y-1">
-          <Meta label="Curve" value="Ristretto255 / sr25519" />
-          <Meta label="Hash" value="SHA-256" />
-          {version !== null && <Meta label="Transcript" value={`v${version}`} />}
-        </dl>
-      </header>
+        <header className="flex flex-col">
+          <div className="bg-acid text-base px-4 py-3">
+            <h1 className="display text-4xl sm:text-6xl">Infinite-deck poker</h1>
+            <p className="label mt-1">VRF / SR25519 / RISTRETTO255 / NO SERVER</p>
+          </div>
+          <p className="text-muted border-line mt-0 max-w-2xl border-2 border-t-0 p-4 text-base leading-relaxed">
+            Provably fair dealing built on sr25519 verifiable random functions. The engine is Rust
+            compiled to WebAssembly — dealing and verification both run in this tab, with no server
+            involved. Your hand is a function of the shared seed and your key, so nobody, this page
+            included, can steer it.
+          </p>
+          <dl className="text-faint label mt-4 flex flex-wrap gap-x-6 gap-y-1">
+            <Meta label="Curve" value="Ristretto255 / sr25519" />
+            <Meta label="Hash" value="SHA-256" />
+            {version !== null && <Meta label="Transcript" value={`v${version}`} />}
+          </dl>
+        </header>
 
-      <ModeSwitch mode={mode} setMode={setMode} />
+        <ModeSwitch mode={mode} setMode={setMode} />
 
-      {mode === 'catch' ? (
-        <CatchTheCheat />
-      ) : (
-        <>
-      <HowItWorks />
+        {mode === 'catch' ? (
+          <CatchTheCheat />
+        ) : (
+          <>
+            <HowItWorks />
 
-      <section className="border-line bg-panel flex flex-wrap items-end gap-4 border-2 p-4">
-        <Field label="Seats" className="w-20">
-          <input
-            type="number"
-            min={2}
-            max={10}
-            value={seats}
-            onChange={(e) => setSeats(Number(e.target.value))}
-            className="border-line bg-raised focus:border-acid w-full border-2 px-2.5 py-1.5 text-sm outline-none"
-          />
-        </Field>
+            <section className="border-line bg-panel flex flex-wrap items-end gap-4 border-2 p-4">
+              <Field label="Seats" className="w-20">
+                <input
+                  type="number"
+                  min={2}
+                  max={10}
+                  value={seats}
+                  onChange={(e) => setSeats(Number(e.target.value))}
+                  className="border-line bg-raised focus:border-acid w-full border-2 px-2.5 py-1.5 text-sm outline-none"
+                />
+              </Field>
 
-        <Field label="Your entropy" className="min-w-56 flex-1">
-          <input
-            value={passphrase}
-            onChange={(e) => setPassphrase(e.target.value)}
-            placeholder="Passphrase — or leave blank to use the system RNG"
-            className="border-line bg-raised placeholder:text-faint focus:border-acid w-full border-2 px-2.5 py-1.5 text-sm outline-none"
-          />
-        </Field>
+              <Field label="Your entropy" className="min-w-56 flex-1">
+                <input
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  placeholder="Passphrase — or leave blank to use the system RNG"
+                  className="border-line bg-raised placeholder:text-faint focus:border-acid w-full border-2 px-2.5 py-1.5 text-sm outline-none"
+                />
+              </Field>
 
-        <button
-          onClick={() => void deal()}
-          disabled={dealing}
-          className="bg-acid display text-base px-8 py-2.5 text-lg transition-opacity
+              <button
+                onClick={() => void deal()}
+                disabled={dealing}
+                className="bg-acid display text-base px-8 py-2.5 text-lg transition-opacity
                      hover:opacity-80 disabled:opacity-40"
-        >
-          {dealing ? 'Dealing…' : 'Deal'}
-        </button>
-      </section>
+              >
+                {dealing ? 'Dealing…' : 'Deal'}
+              </button>
+            </section>
 
-      {error && (
-        <div className="border-bad bg-bad/10 text-bad border-2 px-4 py-3 text-sm">
-          <strong className="font-medium">The engine failed to run.</strong>{' '}
-          <span className="mono text-sm">{error}</span>
-        </div>
-      )}
-
-      {!game && !error && <p className="text-faint text-sm">Loading the engine…</p>}
-
-      {game && (
-        <>
-          <section className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="display text-2xl">The deal</h2>
-              <div className="flex items-center gap-3">
-                <span className="text-faint mono text-xs">
-                  {game.outcome.seed.slice(0, 8)}…{game.outcome.seed.slice(-8)}
-                </span>
-                <div className="w-32">
-                  <SeedFingerprint seed={game.outcome.seed} />
-                </div>
+            {error && (
+              <div className="border-bad bg-bad/10 text-bad border-2 px-4 py-3 text-sm">
+                <strong className="font-medium">The engine failed to run.</strong>{' '}
+                <span className="mono text-sm">{error}</span>
               </div>
-            </div>
-            <Table outcome={game.outcome} />
-            <p className="text-muted text-sm leading-relaxed">
-              Infinite deck: every card is an independent draw, so duplicates are legal and a hand
-              like <span className="mono">K♥ K♥ 9♠</span> is not a bug. It also means{' '}
-              <strong className="text-muted font-medium">five of a kind</strong> exists, and it
-              beats a straight flush.
-            </p>
-          </section>
+            )}
 
-          <TranscriptPanel document={game.transcript_json} />
-        </>
-      )}
+            {!game && !error && <p className="text-faint text-sm">Loading the engine…</p>}
 
-        </>
-      )}
+            {game && (
+              <>
+                <section className="flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h2 className="display text-2xl">The deal</h2>
+                    <div className="flex items-center gap-3">
+                      <span className="text-faint mono text-xs">
+                        {game.outcome.seed.slice(0, 8)}…{game.outcome.seed.slice(-8)}
+                      </span>
+                      <div className="w-32">
+                        <SeedFingerprint seed={game.outcome.seed} />
+                      </div>
+                    </div>
+                  </div>
+                  <Table outcome={game.outcome} />
+                  <p className="text-muted text-sm leading-relaxed">
+                    Infinite deck: every card is an independent draw, so duplicates are legal and a
+                    hand like <span className="mono">K♥ K♥ 9♠</span> is not a bug. It also means{' '}
+                    <strong className="text-muted font-medium">five of a kind</strong> exists, and
+                    it beats a straight flush.
+                  </p>
+                </section>
 
-      <footer className="border-line text-muted flex flex-col gap-3 border-t pt-6 text-sm">
-        <p className="max-w-2xl leading-relaxed">
-          This is a demonstration <em>of</em> the protocol rather than a fair game under it: one tab
-          holds every player&apos;s secret, so whoever reveals last could steer the seed. Real
-          fairness needs a network transport with reveal timeouts.
-        </p>
-        <a
-          href="https://github.com/emilbob/Infinite-deck-poker-using-VRFs"
-          className="hover:text-ink w-fit underline underline-offset-4 transition-colors"
-        >
-          Source on GitHub
-        </a>
-      </footer>
+                <TranscriptPanel document={game.transcript_json} />
+              </>
+            )}
+          </>
+        )}
+
+        <footer className="border-line text-muted flex flex-col gap-3 border-t pt-6 text-sm">
+          <p className="max-w-2xl leading-relaxed">
+            This is a demonstration <em>of</em> the protocol rather than a fair game under it: one
+            tab holds every player&apos;s secret, so whoever reveals last could steer the seed. Real
+            fairness needs a network transport with reveal timeouts.
+          </p>
+          <a
+            href="https://github.com/emilbob/Infinite-deck-poker-using-VRFs"
+            className="hover:text-ink w-fit underline underline-offset-4 transition-colors"
+          >
+            Source on GitHub
+          </a>
+        </footer>
       </main>
     </>
   )
