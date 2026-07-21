@@ -4,6 +4,9 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // GitHub Pages serves this from /<repo>/, not the domain root, so assets
+  // need that prefix. Set by the deploy workflow; local builds stay at '/'.
+  base: process.env.VITE_BASE ?? '/',
   plugins: [react(), tailwindcss()],
   // The wasm package is a file: dependency rebuilt by `npm run build:wasm`.
   // Excluding it from pre-bundling means a rebuilt .wasm is picked up on

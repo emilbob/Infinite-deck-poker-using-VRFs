@@ -1,0 +1,96 @@
+name: web
+
+# Builds the wasm engine + Vite app on every PR, and publishes it to GitHub
+# Pages from main. The PR build is the point: keep-green only finds a
+# package.json at the repo root, so without this the frontend is invisible to
+# CI and a broken web build would merge unnoticed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            Poker_VRF/target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('Poker_VRF/Cargo.lock') }}
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      # Must precede `npm ci`: web/package.json depends on ../Poker_VRF/pkg via
+      # a file: reference, which npm cannot resolve until wasm-pack creates it.
+      - name: Build wasm
+        working-directory: Poker_VRF
+        run: wasm-pack build --target web --out-dir pkg --release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        working-directory: web
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: web
+        run: npx tsc -b
+
+      - name: Build site
+        working-directory: web
+        # `npm run build` would rebuild the wasm; it is already built above.
+        run: npx vite build
+        env:
+          VITE_BASE: /${{ github.event.repository.name }}/
+
+      - name: Check the wasm actually shipped
+        working-directory: web
+        # A silently missing .wasm would still produce a green build and a
+        # page that never deals — the exact failure this repo already hit once.
+        run: |
+          test -n "$(find dist/assets -name '*.wasm' -size +100k)" \
+            || { echo "::error::no .wasm in dist/assets"; exit 1; }
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
