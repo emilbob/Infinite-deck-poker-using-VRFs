@@ -1,13 +1,27 @@
 @import 'tailwindcss';
 
 @theme {
-  --color-felt-950: #07100c;
-  --color-felt-900: #0b1a13;
-  --color-felt-800: #12291e;
-  --color-edge: #1f3d2c;
-  --color-gold: #d9b061;
-  --color-ok: #4ade80;
-  --color-bad: #f87171;
+  /* Neutral dark UI. Colour is reserved for state (verified / rejected) and
+     one quiet accent — nothing decorative is tinted. */
+  --color-base: #0c0e12;
+  --color-panel: #14171d;
+  --color-raised: #1b1f27;
+  --color-line: #272c35;
+  --color-faint: #6b7480;
+  --color-muted: #98a1af;
+  --color-ink: #e7eaf0;
+  --color-accent: #6b96f0;
+  --color-ok: #3ecf8e;
+  --color-bad: #f2686b;
+
+  /* Card faces are physical objects, so they keep a warm paper white. */
+  --color-card: #f7f5f1;
+  --color-card-ink: #17181b;
+  --color-card-red: #c0392b;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
 }
 
 html,
@@ -17,9 +31,14 @@ body,
 }
 
 body {
-  background:
-    radial-gradient(ellipse 90% 60% at 50% 0%, #143026 0%, transparent 70%),
-    var(--color-felt-950);
-  color: #e8efe9;
-  font-family: ui-sans-serif, system-ui, sans-serif;
+  background: var(--color-base);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Hex and JSON only — never UI chrome. */
+.mono {
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
 }
