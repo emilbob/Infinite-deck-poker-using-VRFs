@@ -9,11 +9,18 @@ export default function App() {
   const [passphrase, setPassphrase] = useState('')
   const [version, setVersion] = useState<number | null>(null)
   const [dealing, setDealing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const deal = useCallback(async () => {
     setDealing(true)
+    setError(null)
     try {
       setGame(await dealGame(seats, passphrase))
+    } catch (e) {
+      // Never swallow this. A failed wasm init used to leave the page looking
+      // idle instead of broken, which is much harder to diagnose than an
+      // ugly error box.
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
       setDealing(false)
     }
@@ -73,6 +80,15 @@ export default function App() {
           {dealing ? 'Dealing…' : 'Deal'}
         </button>
       </section>
+
+      {error && (
+        <div className="border-bad/40 bg-bad/10 text-bad rounded-lg border px-4 py-3 text-sm">
+          <strong className="font-medium">The engine failed to run.</strong>{' '}
+          <span className="font-mono text-xs">{error}</span>
+        </div>
+      )}
+
+      {!game && !error && <p className="text-sm text-white/40">Loading the engine…</p>}
 
       {game && (
         <>
