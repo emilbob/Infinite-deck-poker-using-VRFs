@@ -3,8 +3,12 @@ import { dealGame, wireVersion, type GameView } from './engine'
 import { Table } from './components/Table'
 import { TranscriptPanel } from './components/TranscriptPanel'
 import { SeedFingerprint } from './components/SeedFingerprint'
+import { CatchTheCheat } from './components/CatchTheCheat'
+
+type Mode = 'verify' | 'catch'
 
 export default function App() {
+  const [mode, setMode] = useState<Mode>('verify')
   const [game, setGame] = useState<GameView | null>(null)
   const [seats, setSeats] = useState(3)
   const [passphrase, setPassphrase] = useState('')
@@ -53,6 +57,12 @@ export default function App() {
         </dl>
       </header>
 
+      <ModeSwitch mode={mode} setMode={setMode} />
+
+      {mode === 'catch' ? (
+        <CatchTheCheat />
+      ) : (
+        <>
       <HowItWorks />
 
       <section className="border-line bg-panel flex flex-wrap items-end gap-4 border-2 p-4">
@@ -119,6 +129,9 @@ export default function App() {
           </section>
 
           <TranscriptPanel document={game.transcript_json} />
+        </>
+      )}
+
         </>
       )}
 
@@ -204,5 +217,31 @@ function Field({
       <span className="text-faint label">{label}</span>
       {children}
     </label>
+  )
+}
+
+function ModeSwitch({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
+  const tabs: { id: Mode; label: string; hint: string }[] = [
+    { id: 'verify', label: 'Verify', hint: 'Deal a hand and try to break its transcript' },
+    { id: 'catch', label: 'Catch the Cheat', hint: 'Ten rounds. Spot the tampered ones' },
+  ]
+  return (
+    <div className="border-line grid gap-px border-2 sm:grid-cols-2">
+      {tabs.map((t) => {
+        const on = mode === t.id
+        return (
+          <button
+            key={t.id}
+            onClick={() => setMode(t.id)}
+            className={`flex flex-col gap-1 p-4 text-left transition-colors ${
+              on ? 'bg-acid text-black' : 'bg-panel text-muted hover:text-acid'
+            }`}
+          >
+            <span className="display text-xl">{t.label}</span>
+            <span className={`text-sm ${on ? 'text-black/70' : 'text-faint'}`}>{t.hint}</span>
+          </button>
+        )
+      })}
+    </div>
   )
 }

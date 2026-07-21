@@ -18,6 +18,7 @@
 //! verification is portable across processes, machines, and languages.
 
 pub mod api;
+pub mod cheats;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
