@@ -17,6 +17,10 @@
 //! versioned, hex-encoded JSON document ([`Transcript::to_json`]) so the
 //! verification is portable across processes, machines, and languages.
 
+pub mod api;
+#[cfg(target_arch = "wasm32")]
+mod wasm;
+
 use rand::rngs::OsRng;
 use rand::RngCore;
 use schnorrkel::{
@@ -96,7 +100,7 @@ impl std::error::Error for Error {}
 // ---------------------------------------------------------------------------
 
 /// A playing card. `rank` is 2..=14 (14 = ace), `suit` is 0..=3.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Card {
     pub rank: u8,
     pub suit: u8,
