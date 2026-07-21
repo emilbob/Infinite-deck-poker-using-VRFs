@@ -23,7 +23,13 @@ export function TranscriptPanel({ document }: Props) {
     setChecking(true)
     let cancelled = false
     const t = setTimeout(async () => {
-      const v = await verifyDocument(text)
+      let v: VerifyView
+      try {
+        v = await verifyDocument(text)
+      } catch (e) {
+        // An engine failure is not a rejected transcript; say which it is.
+        v = { ok: false, error: `engine error: ${e}`, outcome: null }
+      }
       if (!cancelled) {
         setResult(v)
         setChecking(false)
