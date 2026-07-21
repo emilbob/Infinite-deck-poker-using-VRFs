@@ -6,5 +6,7 @@ The project autopilot (weekly, Wednesdays) builds the first unchecked milestone 
 
 ## Milestones
 - [x] M1: Verifiable game engine — shared-seed commit-reveal (fixes the sign-your-own-commitment flaw), VRF→cards with unbiased sampling, infinite-deck hand evaluator (five-of-a-kind top), `Transcript` + `verify_transcript` with tamper-detection tests, lib/bin split, clippy/fmt clean, `target/` untracked. Built live 2026-07-21.
-- [ ] M2: Playable CLI game — multiple rounds with per-round seeds, simple betting (chips, check/bet/fold) on top of the verified core, and a transcript log written to disk; acceptance: a full 3-player match runs in the terminal and its saved transcript re-verifies.
-- [ ] M3: WASM + web demo — compile the engine to wasm, minimal Vite page (Emil's standard stack) where a game plays out with the verification shown live; acceptance: `verify_transcript` runs in-browser on a game just played.
+- [x] M2: WASM + web demo — compile the engine to wasm, Vite + React 19 + Tailwind v4 page (no r3f/Lenis: no WebGL scene, no scroll narrative) where a game plays out with verification shown live, including a tamper panel that edits a transcript byte in-browser and shows the resulting error. Acceptance: `verify_transcript` runs in-browser on a game just played, and a tampered byte visibly fails. Built 2026-07-21; published to Pages by `.github/workflows/web.yml`.
+- [ ] M3: Betting in the browser — multiple rounds with per-round seeds, chips and check/bet/fold on top of the verified core, transcripts downloadable per round.
+
+> **2026-07-21 — reordered.** The original M2 was a betting CLI. Dropped: it was throwaway UI that would be rebuilt in the browser immediately, so betting moved into the web milestone instead. The terminal binary stays a protocol demo, not a game surface.
