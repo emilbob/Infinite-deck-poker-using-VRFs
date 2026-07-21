@@ -1,0 +1,25 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-felt-950: #07100c;
+  --color-felt-900: #0b1a13;
+  --color-felt-800: #12291e;
+  --color-edge: #1f3d2c;
+  --color-gold: #d9b061;
+  --color-ok: #4ade80;
+  --color-bad: #f87171;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background:
+    radial-gradient(ellipse 90% 60% at 50% 0%, #143026 0%, transparent 70%),
+    var(--color-felt-950);
+  color: #e8efe9;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
