@@ -52,7 +52,9 @@ export function Table({ outcome }: { outcome: OutcomeView }) {
             )}
 
             <div className="w-24 shrink-0">
-              <div className="display text-lg">{seat === 0 ? 'You' : `Player ${String(seat + 1).padStart(2, '0')}`}</div>
+              <div className="display text-lg">
+                {seat === 0 ? 'You' : `Player ${String(seat + 1).padStart(2, '0')}`}
+              </div>
               {won && (
                 <div className="text-acid label flex items-center gap-1">
                   <svg viewBox="0 0 16 16" className="h-3 w-3" aria-hidden>

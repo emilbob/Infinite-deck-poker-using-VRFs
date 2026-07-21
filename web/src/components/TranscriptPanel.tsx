@@ -89,9 +89,7 @@ export function TranscriptPanel({ document }: Props) {
       </div>
 
       {result && !result.ok && !checking && (
-        <p className="border-bad bg-bad/10 text-bad border-2 px-3 py-2 text-sm">
-          {result.error}
-        </p>
+        <p className="border-bad bg-bad/10 text-bad border-2 px-3 py-2 text-sm">{result.error}</p>
       )}
 
       <div className="border-acid bg-acid/[0.07] flex flex-col gap-3 border-2 p-4">
@@ -142,9 +140,7 @@ function Pill({ tone, children }: { tone: 'ok' | 'bad' | 'idle'; children: React
     idle: 'text-faint bg-raised border-line',
   }[tone]
   return (
-    <span
-      className={`label inline-flex items-center gap-1.5 border-2 px-2.5 py-1 ${styles}`}
-    >
+    <span className={`label inline-flex items-center gap-1.5 border-2 px-2.5 py-1 ${styles}`}>
       <span className="h-2 w-2 bg-current" />
       {children}
     </span>
