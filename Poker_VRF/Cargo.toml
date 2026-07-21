@@ -1,6 +1,6 @@
 [package]
 name = "Poker_VRF"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [lib]
@@ -12,6 +12,9 @@ name = "Poker_VRF"
 path = "src/main.rs"
 
 [dependencies]
+hex = "0.4"
 rand = "0.8"
 schnorrkel = "0.11.4"   # pinned: VRF API is version-sensitive across 0.11.x
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 sha2 = "0.10"
