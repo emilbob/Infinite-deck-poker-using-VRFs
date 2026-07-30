@@ -3,7 +3,45 @@ import { verifyDocument, type VerifyView } from '../engine'
 
 type Props = { document: string }
 
-const CHECKS = ['Commitments', 'Seed derivation', 'VRF proofs', 'Hands recomputed'] as const
+/** The stages of `verify_transcript`, in the order it runs them. */
+const CHECKS = ['Commitments', 'Seed derived', 'VRF proofs', 'Hands & winner'] as const
+
+type CellState = 'pass' | 'fail' | 'skipped' | 'idle'
+
+/**
+ * What the four stage cells show for a given result.
+ *
+ * `verify_transcript` short-circuits, so one rejection says three things at
+ * once: the stages before it passed, that stage failed, and the stages after it
+ * were *never evaluated*. Marking all four failed would claim cryptographic
+ * failures the verifier never observed — precisely the sloppiness this whole
+ * demo argues against. The engine reports the stage (`failed_at`) so the UI
+ * doesn't have to guess it from an error string.
+ *
+ * "Seed derived" is never a `fail`: `combine_seed` is a pure hash with nothing
+ * to verify. It was reached, or it wasn't.
+ */
+function cells(result: VerifyView | null, checking: boolean): CellState[] {
+  if (checking || !result) return ['idle', 'idle', 'idle', 'idle']
+  if (result.ok) return ['pass', 'pass', 'pass', 'pass']
+
+  switch (result.failed_at) {
+    // The text never became a transcript, so no check below it ran.
+    case 'decode':
+    case 'shape':
+      return ['skipped', 'skipped', 'skipped', 'skipped']
+    case 'commitments':
+      return ['fail', 'skipped', 'skipped', 'skipped']
+    case 'proofs':
+      return ['pass', 'pass', 'fail', 'skipped']
+    case 'winner':
+      return ['pass', 'pass', 'pass', 'fail']
+    // No stage: the engine itself failed, which is not a verdict on the
+    // document. Claiming any check ran would be a guess.
+    default:
+      return ['skipped', 'skipped', 'skipped', 'skipped']
+  }
+}
 
 /**
  * Edit the transcript, watch verification react.
@@ -26,8 +64,9 @@ export function TranscriptPanel({ document }: Props) {
       try {
         v = await verifyDocument(text)
       } catch (e) {
-        // An engine failure is not a rejected transcript; say which it is.
-        v = { ok: false, error: `Engine error: ${e}`, outcome: null }
+        // An engine failure is not a rejected transcript; say which it is. No
+        // stage, because no stage ran — see `cells`.
+        v = { ok: false, error: `Engine error: ${e}`, failed_at: null, outcome: null }
       }
       if (!cancelled) {
         setResult(v)
@@ -70,6 +109,8 @@ export function TranscriptPanel({ document }: Props) {
 
   const reformat = () => mutate(() => {})
 
+  const states = cells(result, checking)
+
   return (
     <section className="flex flex-col gap-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -79,12 +120,14 @@ export function TranscriptPanel({ document }: Props) {
 
       <p className="text-muted max-w-2xl text-sm leading-relaxed">
         Everything a third party needs to check this game. Edit any byte below — verification
-        re-runs as you type.
+        re-runs as you type. It stops at the first problem, so stages after a failure read{' '}
+        <span className="text-faint">–</span> for <em>not reached</em> rather than claiming to have
+        failed too.
       </p>
 
       <div className="border-line bg-panel divide-line grid grid-cols-2 divide-x divide-y border-2 sm:grid-cols-4 sm:divide-y-0">
-        {CHECKS.map((c) => (
-          <Check key={c} label={c} state={checking || !result ? 'idle' : result.ok} />
+        {CHECKS.map((c, i) => (
+          <Check key={c} label={c} state={states[i]} />
         ))}
       </div>
 
@@ -147,19 +190,26 @@ function Pill({ tone, children }: { tone: 'ok' | 'bad' | 'idle'; children: React
   )
 }
 
-function Check({ label, state }: { label: string; state: boolean | 'idle' }) {
-  const mark =
-    state === 'idle' ? (
-      <span className="text-faint">·</span>
-    ) : state ? (
-      <span className="text-acid">✓</span>
-    ) : (
-      <span className="text-bad">✕</span>
-    )
+function Check({ label, state }: { label: string; state: CellState }) {
+  // The glyph is never the only signal: each cell is labelled for assistive
+  // tech, and "not reached" is a distinct state rather than a dimmed failure.
+  const { mark, tone, said } = {
+    pass: { mark: '✓', tone: 'text-acid', said: 'passed' },
+    fail: { mark: '✕', tone: 'text-bad', said: 'failed' },
+    skipped: { mark: '–', tone: 'text-faint', said: 'not reached' },
+    idle: { mark: '·', tone: 'text-faint', said: 'checking' },
+  }[state]
+
   return (
-    <div className="flex items-center gap-2 px-3 py-2.5">
-      <span className="w-3 text-center text-sm">{mark}</span>
-      <span className="text-muted text-sm">{label}</span>
+    <div
+      className="flex items-center gap-2 px-3 py-2.5"
+      title={`${label}: ${said}`}
+      aria-label={`${label}: ${said}`}
+    >
+      <span className={`w-3 text-center text-sm ${tone}`} aria-hidden>
+        {mark}
+      </span>
+      <span className={`text-sm ${state === 'skipped' ? 'text-faint' : 'text-muted'}`}>{label}</span>
     </div>
   )
 }

@@ -37,7 +37,15 @@ export function CatchTheCheat() {
   const submit = useCallback(async (guess: boolean) => {
     setBusy(true)
     try {
-      setAnswer(await roundAnswer(guess))
+      const scored = await roundAnswer(guess)
+      // `null` means no round was pending — the engine refuses to score the
+      // same round twice. Say so instead of leaving the buttons up, which
+      // reads as the click having been dropped.
+      if (scored === null) {
+        setError('That round was already scored. Deal the next one.')
+        return
+      }
+      setAnswer(scored)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -54,20 +62,38 @@ export function CatchTheCheat() {
     void next()
   }, [next])
 
-  if (error) {
+  // Rendered inline rather than in place of the mode: replacing the whole view
+  // removed the only control that could clear the error, so a single transient
+  // failure needed a page reload to escape.
+  const banner = error && (
+    <div className="border-bad bg-bad/10 text-bad flex flex-wrap items-center gap-3 border-2 px-4 py-3 text-sm">
+      <span>
+        <strong>Something went wrong.</strong> <span className="mono text-xs">{error}</span>
+      </span>
+      <button
+        onClick={() => void next()}
+        className="border-bad ml-auto border-2 px-3 py-1 text-sm transition-colors hover:bg-bad/20"
+      >
+        Deal another round
+      </button>
+    </div>
+  )
+
+  if (!round) {
     return (
-      <div className="border-bad bg-bad/10 text-bad border-2 px-4 py-3 text-sm">
-        <strong>The engine failed to run.</strong> <span className="mono text-xs">{error}</span>
+      <div className="flex flex-col gap-4">
+        {banner}
+        {!error && <p className="text-faint text-sm">Dealing…</p>}
       </div>
     )
   }
-
-  if (!round) return <p className="text-faint text-sm">Dealing…</p>
 
   const done = answer?.finished === true
 
   return (
     <section className="flex flex-col gap-5">
+      {banner}
+
       <Scoreboard round={round} answer={answer} />
 
       <Table outcome={round.outcome} />
