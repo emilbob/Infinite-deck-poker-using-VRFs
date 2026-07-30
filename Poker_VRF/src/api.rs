@@ -10,8 +10,8 @@
 
 use crate::cheats::{deal_round, pick_cheat, Round, Tier};
 use crate::{
-    evaluate_hand, play_game, secret_from_passphrase, verify_transcript, Card, HandRank, Outcome,
-    Player, Transcript,
+    evaluate_hand, play_game, secret_from_passphrase, verify_transcript, Card, Error, HandRank,
+    Outcome, Player, Transcript,
 };
 use serde::Serialize;
 
@@ -82,12 +82,53 @@ pub struct GameView {
     pub transcript_json: String,
 }
 
+/// Where in verification a document was rejected.
+///
+/// [`verify_transcript`] short-circuits, so a failure at one stage means every
+/// later stage was *never evaluated*. Without this the UI can only know that
+/// something failed, and a per-stage readout has to either fabricate failures
+/// it did not observe or say nothing at all. Ordered as verification runs.
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum Stage {
+    /// The text never decoded into a transcript, so no check ran at all.
+    Decode,
+    /// Arrays were empty or of unequal length — nothing coherent to check.
+    Shape,
+    /// Some reveal does not hash to its published commitment.
+    Commitments,
+    /// Some VRF proof does not verify against the shared seed.
+    Proofs,
+    /// Hands recompute, but to a different winner than the one claimed.
+    Winner,
+}
+
+impl Stage {
+    /// Exhaustive by design: a new [`Error`] variant must be placed on this
+    /// ladder rather than silently defaulting to a stage it did not fail at.
+    fn of(e: &Error) -> Stage {
+        match e {
+            Error::Encoding { .. } | Error::UnsupportedVersion { .. } => Stage::Decode,
+            Error::BadTranscriptShape => Stage::Shape,
+            Error::CommitmentMismatch { .. } => Stage::Commitments,
+            // `Malformed` is raised only by `verify_draw`, decoding the group
+            // elements a proof check needs — so it is a proof failure, not a
+            // decode one: `from_json` accepted the field's length and hex.
+            Error::BadVrfProof { .. } | Error::Malformed { .. } => Stage::Proofs,
+            Error::WrongWinner { .. } => Stage::Winner,
+        }
+    }
+}
+
 /// The result of verifying a document, shaped so the UI can render either arm
 /// without inspecting error strings.
 #[derive(Serialize)]
 pub struct VerifyView {
     pub ok: bool,
     pub error: Option<String>,
+    /// `None` when `ok`. Otherwise the stage that rejected the document — the
+    /// stages before it passed, the stages after it never ran.
+    pub failed_at: Option<Stage>,
     pub outcome: Option<OutcomeView>,
 }
 
@@ -120,11 +161,13 @@ pub fn verify_json(document: &str) -> String {
         Ok(outcome) => VerifyView {
             ok: true,
             error: None,
+            failed_at: None,
             outcome: Some(OutcomeView::from(&outcome)),
         },
         Err(e) => VerifyView {
             ok: false,
             error: Some(e.to_string()),
+            failed_at: Some(Stage::of(&e)),
             outcome: None,
         },
     };
@@ -314,7 +357,68 @@ mod tests {
             let result: Value = serde_json::from_str(&verify_json(junk)).unwrap();
             assert_eq!(result["ok"], false, "junk input {junk:?} must not verify");
             assert!(result["error"].is_string());
+            // Nothing decoded, so no cryptographic check ran. The UI must be
+            // able to say that rather than reporting four failed checks.
+            assert_eq!(
+                result["failed_at"], "decode",
+                "junk input {junk:?} must fail at decode"
+            );
         }
+    }
+
+    /// The reason `failed_at` exists: the UI marks stages before the failure as
+    /// passed and stages after it as never reached, so it has to be told which
+    /// stage that is. Driven from the real cheats rather than crafted strings —
+    /// if a cheat ever starts failing earlier than intended, this catches it.
+    #[test]
+    fn every_cheat_is_rejected_at_the_stage_it_corrupts() {
+        use crate::cheats::Cheat;
+
+        let expected = |c: Cheat| match c {
+            Cheat::None => None,
+            Cheat::TamperedReveal | Cheat::StolenCommitment => Some("commitments"),
+            Cheat::ForgedProof | Cheat::SwappedPreouts => Some("proofs"),
+            Cheat::SwappedWinner => Some("winner"),
+        };
+
+        for cheat in Cheat::ALL {
+            let round = deal_round(3, cheat);
+            let result: Value =
+                serde_json::from_str(&verify_json(&round.transcript.to_json())).unwrap();
+
+            match expected(cheat) {
+                None => {
+                    assert_eq!(result["ok"], true, "{cheat:?} is honest and must verify");
+                    assert!(
+                        result["failed_at"].is_null(),
+                        "{cheat:?} verified, so there is no failing stage"
+                    );
+                }
+                Some(stage) => {
+                    assert_eq!(result["ok"], false, "{cheat:?} must be rejected");
+                    assert_eq!(
+                        result["failed_at"], stage,
+                        "{cheat:?} should be caught at the {stage} stage, not wherever \
+                         it landed — a cheat rejected earlier than intended makes the \
+                         per-stage readout lie about what was checked"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_shape_failure_is_distinct_from_a_decode_failure() {
+        // Well-formed hex fields of legal length, but one array short — decoding
+        // succeeds and verification rejects it, which are different stages.
+        let dealt: Value = serde_json::from_str(&deal_json(3, None)).unwrap();
+        let mut doc: Value = serde_json::from_str(dealt["transcript_json"].as_str().unwrap())
+            .expect("a dealt transcript is valid JSON");
+        doc["reveals"].as_array_mut().unwrap().pop();
+
+        let result: Value = serde_json::from_str(&verify_json(&doc.to_string())).unwrap();
+        assert_eq!(result["ok"], false);
+        assert_eq!(result["failed_at"], "shape");
     }
 
     #[test]

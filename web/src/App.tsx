@@ -44,12 +44,23 @@ export default function App() {
             <h1 className="display text-4xl sm:text-6xl">Infinite-deck poker</h1>
             <p className="label mt-1">VRF / SR25519 / RISTRETTO255 / NO SERVER</p>
           </div>
-          <p className="text-muted border-line mt-0 max-w-2xl border-2 border-t-0 p-4 text-base leading-relaxed">
-            Provably fair dealing built on sr25519 verifiable random functions. The engine is Rust
-            compiled to WebAssembly — dealing and verification both run in this tab, with no server
-            involved. Your hand is a function of the shared seed and your key, so nobody, this page
-            included, can steer it.
-          </p>
+          <div className="border-line mt-0 max-w-2xl border-2 border-t-0 p-4">
+            <p className="text-muted text-base leading-relaxed">
+              Provably fair dealing built on sr25519 verifiable random functions. The engine is Rust
+              compiled to WebAssembly — dealing and verification both run in this tab, with no
+              server involved. Your hand is a function of the shared seed and your key, so nobody,
+              this page included, can steer it.
+            </p>
+            {/* Said plainly and early: visitors arrive expecting poker, find a
+                hand they cannot act on, and conclude the page is broken rather
+                than that the constraint is the entire point. */}
+            <p className="text-faint mt-3 text-sm leading-relaxed">
+              <strong className="text-muted font-medium">The poker is a prop.</strong> There is no
+              betting and nothing to decide — your five cards are fixed the instant the seed exists,
+              because anything that could change them afterwards would destroy the proof. The real
+              game is <em>Catch the Cheat</em>: can you spot a rigged deal?
+            </p>
+          </div>
           <dl className="text-faint label mt-4 flex flex-wrap gap-x-6 gap-y-1">
             <Meta label="Curve" value="Ristretto255 / sr25519" />
             <Meta label="Hash" value="SHA-256" />
@@ -222,7 +233,11 @@ function Field({
 function ModeSwitch({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
   const tabs: { id: Mode; label: string; hint: string }[] = [
     { id: 'verify', label: 'Verify', hint: 'Deal a hand and try to break its transcript' },
-    { id: 'catch', label: 'Catch the Cheat', hint: 'Ten rounds. Spot the tampered ones' },
+    {
+      id: 'catch',
+      label: 'Catch the Cheat',
+      hint: 'Ten rounds, some rigged. Find out where your eyes stop working',
+    },
   ]
   return (
     <div className="border-line grid gap-px border-2 sm:grid-cols-2">

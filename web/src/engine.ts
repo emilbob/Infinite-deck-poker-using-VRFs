@@ -39,9 +39,21 @@ export type GameView = {
   transcript_json: string
 }
 
+/**
+ * The stage of `verify_transcript` that rejected a document, in the order
+ * verification runs them. Mirrors `api::Stage`.
+ *
+ * Verification short-circuits, so this is what lets the UI distinguish "this
+ * check failed" from "this check was never reached" — see `api.rs` for why
+ * reporting a blanket failure would misrepresent what was actually checked.
+ */
+export type Stage = 'decode' | 'shape' | 'commitments' | 'proofs' | 'winner'
+
 export type VerifyView = {
   ok: boolean
   error: string | null
+  /** `null` when `ok`, and when the failure was the engine rather than the document. */
+  failed_at: Stage | null
   outcome: OutcomeView | null
 }
 
