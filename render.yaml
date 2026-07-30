@@ -1,0 +1,71 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Hosts the browser demo as a static site. There is no server component and
+# never can be: the engine is Rust compiled to wasm and both dealing and
+# verification run in the visitor's tab, so this is pure static hosting.
+#
+# The whole build is one command on purpose. web/package.json depends on
+# ../Poker_VRF/pkg through a `file:` reference, and that directory is a build
+# artifact excluded from git.
+#
+# Note where that actually bites, because it is not where you would guess:
+# `npm ci` SUCCEEDS with the wasm absent — it just writes a dangling symlink,
+# node_modules/Poker_VRF -> ../../Poker_VRF/pkg. The failure lands later, when
+# Vite tries to resolve the import through that broken link. So the constraint
+# is "wasm before *build*", not "wasm before *install*", and a host is only
+# unusable here if it gives you no way to run wasm-pack before the build step.
+
+services:
+  - type: web
+    name: infinite-deck-poker
+    runtime: static
+    staticPublishPath: web/dist
+
+    envVars:
+      # Not strictly required — Render's auto-install would succeed (dangling
+      # symlink and all). It is set so there is exactly one dependency install,
+      # in a known order, rather than one implicit and one in buildCommand.
+      - key: SKIP_INSTALL_DEPS
+        value: 'true'
+      # Deliberately NOT setting VITE_BASE. vite.config.ts falls back to '/',
+      # which is correct at a domain root. It is only set by the GitHub Pages
+      # workflow, where the site is served from /<repo>/ instead.
+
+    buildCommand: |
+      set -eux
+
+      # Rust may already be present in the build image; do not depend on it.
+      if ! command -v cargo >/dev/null 2>&1; then
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+          | sh -s -- -y --default-toolchain stable --profile minimal
+      fi
+      . "$HOME/.cargo/env"
+      rustup target add wasm32-unknown-unknown
+
+      # A prebuilt binary — `cargo install wasm-pack` would compile it from
+      # source and add minutes to every deploy.
+      if ! command -v wasm-pack >/dev/null 2>&1; then
+        curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      fi
+
+      # Must precede npm ci: this is what creates Poker_VRF/pkg.
+      cd Poker_VRF
+      wasm-pack build --target web --out-dir pkg --release
+      cd ..
+
+      cd web
+      npm ci
+      # `npm run build` would rebuild the wasm a second time; it is already built.
+      npx tsc -b
+      npx vite build
+
+      # A silently missing .wasm still exits 0 and ships a page that loads and
+      # never deals — the exact failure this project has already hit once.
+      test -n "$(find dist/assets -name '*.wasm' -size +100k)" \
+        || { echo "ERROR: no .wasm in dist/assets"; exit 1; }
+
+    headers:
+      # Content-addressed filenames from Vite, so they are safe to cache hard.
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
