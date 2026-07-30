@@ -32,21 +32,34 @@ services:
       # workflow, where the site is served from /<repo>/ instead.
 
     buildCommand: |
-      set -eux
+      # Deliberately not `set -u`: the rustup and wasm-pack installer scripts
+      # reference unset variables, and tripping on those kills the build.
+      set -ex
 
-      # Rust may already be present in the build image; do not depend on it.
-      if ! command -v cargo >/dev/null 2>&1; then
+      # `rustup`, not `cargo`, is the thing to test for — adding the wasm32
+      # target needs rustup specifically, and an image could ship cargo without
+      # it. Installing rustup also brings cargo, so this covers both.
+      if ! command -v rustup >/dev/null 2>&1; then
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
           | sh -s -- -y --default-toolchain stable --profile minimal
       fi
-      . "$HOME/.cargo/env"
+
+      # Put cargo's bin on PATH rather than sourcing ~/.cargo/env: that file
+      # only exists when rustup did the installing, so sourcing it
+      # unconditionally fails outright on an image that ships Rust already.
+      export PATH="$HOME/.cargo/bin:$PATH"
+
       rustup target add wasm32-unknown-unknown
 
       # A prebuilt binary — `cargo install wasm-pack` would compile it from
-      # source and add minutes to every deploy.
+      # source and add minutes to every deploy. The installer drops it in
+      # ~/.cargo/bin, which the PATH export above has already covered.
       if ! command -v wasm-pack >/dev/null 2>&1; then
         curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       fi
+
+      # Fail here, with the versions visible, rather than inside the build.
+      rustup --version && cargo --version && wasm-pack --version && node --version
 
       # Must precede npm ci: this is what creates Poker_VRF/pkg.
       cd Poker_VRF
