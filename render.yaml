@@ -44,21 +44,32 @@ services:
           | sh -s -- -y --default-toolchain stable --profile minimal
       fi
 
-      # Put cargo's bin on PATH rather than sourcing ~/.cargo/env: that file
-      # only exists when rustup did the installing, so sourcing it
-      # unconditionally fails outright on an image that ships Rust already.
-      export PATH="$HOME/.cargo/bin:$PATH"
+      # Render ships Rust with CARGO_HOME=/usr/local/cargo, and that path is
+      # READ-ONLY. Two things need it writable: installing wasm-pack (which
+      # copies into $CARGO_HOME/bin) and cargo itself (which caches the crate
+      # registry there while building). Both fail with "Read-only file system
+      # (os error 30)" otherwise. RUSTUP_HOME is left alone, so the existing
+      # toolchain is still found.
+      if [ ! -w "${CARGO_HOME:-/nonexistent}" ]; then
+        export CARGO_HOME="$HOME/.cargo-render"
+        mkdir -p "$CARGO_HOME/bin"
+      fi
+      export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:$PATH"
 
       rustup target add wasm32-unknown-unknown
 
-      # A prebuilt binary — `cargo install wasm-pack` would compile it from
-      # source and add minutes to every deploy. The installer drops it in
-      # ~/.cargo/bin, which the PATH export above has already covered.
+      # A prebuilt binary; `cargo install wasm-pack` would compile it from
+      # source and add minutes to every deploy. Falls back to that anyway if
+      # the installer cannot place the binary, since a slow deploy beats none.
       if ! command -v wasm-pack >/dev/null 2>&1; then
-        curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh || true
+      fi
+      if ! command -v wasm-pack >/dev/null 2>&1; then
+        cargo install wasm-pack --root "$CARGO_HOME" --locked
       fi
 
       # Fail here, with the versions visible, rather than inside the build.
+      echo "CARGO_HOME=$CARGO_HOME"
       rustup --version && cargo --version && wasm-pack --version && node --version
 
       # Must precede npm ci: this is what creates Poker_VRF/pkg.
