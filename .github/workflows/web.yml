@@ -6,19 +6,29 @@ name: web
 # main — by the time Render builds, a bad commit has already landed.
 #
 # keep-green only finds a package.json at the repo root, and there isn't one,
-# so without this workflow the frontend is invisible to CI entirely.
+# so without this workflow the frontend is invisible to CI entirely — including
+# to keep-green's monthly rot check, hence the schedule below.
 
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Monthly, half an hour after keep-green's Rust check on the same day, so both
+  # health checks land together but a failure says which half rotted. Without
+  # this, nothing exercises the wasm/web build between merges: Render only
+  # builds on push, so a toolchain or dependency drift would sit undetected
+  # until the next merge tried to ship.
+  schedule:
+    - cron: "30 6 15 * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: web-${{ github.ref }}
+  # Keyed by event too: otherwise a scheduled run and a push run share a group
+  # and cancel-in-progress lets one kill the other.
+  group: web-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
