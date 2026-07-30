@@ -1,9 +1,12 @@
 name: web
 
-# Builds the wasm engine + Vite app on every PR, and publishes it to GitHub
-# Pages from main. The PR build is the point: keep-green only finds a
-# package.json at the repo root, so without this the frontend is invisible to
-# CI and a broken web build would merge unnoticed.
+# Builds the wasm engine + Vite app on every PR. This is CI, not deployment:
+# hosting moved to Render (see render.yaml), which builds from main after a
+# merge. That makes this the only check standing between a broken frontend and
+# main — by the time Render builds, a bad commit has already landed.
+#
+# keep-green only finds a package.json at the repo root, and there isn't one,
+# so without this workflow the frontend is invisible to CI entirely.
 
 on:
   push:
@@ -63,34 +66,16 @@ jobs:
       - name: Build site
         working-directory: web
         # `npm run build` would rebuild the wasm; it is already built above.
+        # No VITE_BASE: Render serves from a domain root, so vite.config.ts's
+        # '/' fallback is correct. It was only set for Pages, which served the
+        # site from /<repo>/.
         run: npx vite build
-        env:
-          VITE_BASE: /${{ github.event.repository.name }}/
 
       - name: Check the wasm actually shipped
         working-directory: web
         # A silently missing .wasm would still produce a green build and a
         # page that never deals — the exact failure this repo already hit once.
+        # Kept deliberately: Render runs the same guard, but only after a merge.
         run: |
           test -n "$(find dist/assets -name '*.wasm' -size +100k)" \
             || { echo "::error::no .wasm in dist/assets"; exit 1; }
-
-      - name: Upload Pages artifact
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: web/dist
-
-  deploy:
-    needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - id: deploy
-        uses: actions/deploy-pages@v5

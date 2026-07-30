@@ -2,7 +2,7 @@
 
 Provably fair poker where **no player — and no server — controls the randomness**, built on sr25519 VRFs ([schnorrkel](https://github.com/w3f/schnorrkel), the primitive Polkadot uses).
 
-**▶ [Play it in your browser](https://emilbob.github.io/Infinite-deck-poker-using-VRFs/)** — the Rust engine is compiled to WebAssembly, so dealing *and* verification happen in your tab. There is no server and no API call.
+**▶ [Play it in your browser](https://infinite-deck-poker.onrender.com)** — the Rust engine is compiled to WebAssembly, so dealing *and* verification happen in your tab. There is no server and no API call.
 
 The point is not the poker. It's a **dealer you don't have to trust**: every game emits a transcript any third party can re-verify, and tampering with any byte of it fails.
 
